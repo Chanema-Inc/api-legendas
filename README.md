@@ -65,6 +65,7 @@ Configuracoes disponiveis:
 - `APP_ENV`: `development` ou `production`
 - `APP_PORT`: porta do servidor HTTP
 - `STORAGE_BACKEND`: `memory_cache` ou `redis`
+- `UPSTASH_REDIS_URL`: URL completa do Upstash Redis, como `rediss://default:senha@host:6379`; quando informada, a conexao usa o parse da URL e rede TCP
 - `REDIS_ADDR`: host e porta do Redis usados quando `STORAGE_BACKEND=redis`
 - `REDIS_PASSWORD`: senha do Redis usada quando exigida pelo servidor
 - `REDIS_DB`: numero do banco logico do Redis
