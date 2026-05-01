@@ -72,6 +72,9 @@ Configuracoes disponiveis:
 - `REDIS_KEY_PREFIX`: prefixo aplicado as chaves de legenda no Redis
 - `MAX_SUBTITLE_SIZE_BYTES`: tamanho maximo aceito para o payload da legenda
 - `ALLOWED_ORIGINS`: lista de origens permitidas no CORS, separadas por virgulas
+- `ALLOWED_ORIGINS_GET`: allowlist de origens para requisicoes GET (opcional; usa `ALLOWED_ORIGINS` quando vazio)
+- `ALLOWED_ORIGINS_POST`: allowlist de origens para requisicoes POST (opcional; usa `ALLOWED_ORIGINS` quando vazio)
+- `ALLOWED_ORIGINS_OPTIONS`: allowlist de origens para preflight OPTIONS sem `Access-Control-Request-Method` (opcional; usa `ALLOWED_ORIGINS` quando vazio)
 - `PROBE_ALLOWED_IPS`: lista de IPs permitidos para `/health`, separada por virgulas (vazio significa sem restricao de IP)
 - `HEALTH_PROTECTION_ENABLED`: habilita ou desabilita protecao de IP para `/health`
 - `CACHE_TTL`: duracao de expiracao do cache, por exemplo `10m`
@@ -185,10 +188,10 @@ A API depende de uma interface de armazenamento (`service.Store`), entao o backe
 
 ## CORS
 
-O acesso entre origens e controlado por `ALLOWED_ORIGINS`. A API:
+O acesso entre origens e controlado por `ALLOWED_ORIGINS` e, opcionalmente, por allowlists especificas de metodo. A API:
 
 - Aceita requisicoes preflight de origens permitidas
-- Rejeita requisicoes de origens fora da allowlist
+- Rejeita requisicoes de origens fora da allowlist do metodo efetivo (GET/POST)
 - Retorna `Access-Control-Allow-Origin` apenas para origens aceitas
 
 ## Limitacao De Taxa

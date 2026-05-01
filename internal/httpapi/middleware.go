@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"strings"
 )
 
 func WithProbeIPAllowlist(enabled bool, allowedProbeIPs map[string]struct{}, next http.Handler) http.Handler {
@@ -34,10 +35,19 @@ func WithProbeIPAllowlist(enabled bool, allowedProbeIPs map[string]struct{}, nex
 	})
 }
 
-func WithCORS(allowedOrigins map[string]struct{}, next http.Handler) http.Handler {
+func WithCORS(allowedOriginsByRouteAndMethod map[string]map[string]map[string]struct{}, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		origin := request.Header.Get("Origin")
 		if origin != "" {
+			method := request.Method
+			if request.Method == http.MethodOptions {
+				requestedMethod := strings.ToUpper(strings.TrimSpace(request.Header.Get("Access-Control-Request-Method")))
+				if requestedMethod != "" {
+					method = requestedMethod
+				}
+			}
+
+			allowedOrigins := allowedOriginsByRouteAndMethod[request.URL.Path][strings.ToUpper(method)]
 			if _, allowed := allowedOrigins[origin]; !allowed {
 				writeJSONError(response, http.StatusForbidden, "origin not allowed")
 				return
@@ -45,7 +55,7 @@ func WithCORS(allowedOrigins map[string]struct{}, next http.Handler) http.Handle
 
 			response.Header().Set("Access-Control-Allow-Origin", origin)
 			response.Header().Set("Vary", "Origin")
-			response.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS") //por que options é aceito? cors envia options?
+			response.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			response.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		}
 

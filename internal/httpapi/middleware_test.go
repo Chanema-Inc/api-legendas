@@ -10,7 +10,11 @@ import (
 func TestWithCORSAllowsConfiguredOrigin(t *testing.T) {
 	t.Parallel()
 
-	handler := WithCORS(map[string]struct{}{"http://client.local": {}}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+	handler := WithCORS(map[string]map[string]map[string]struct{}{
+		"/subtitle": {
+			http.MethodPost: {"http://client.local": {}},
+		},
+	}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.WriteHeader(http.StatusOK)
 	}))
 
@@ -32,7 +36,11 @@ func TestWithCORSAllowsConfiguredOrigin(t *testing.T) {
 func TestWithCORSBlocksUnknownOrigin(t *testing.T) {
 	t.Parallel()
 
-	handler := WithCORS(map[string]struct{}{"http://client.local": {}}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+	handler := WithCORS(map[string]map[string]map[string]struct{}{
+		"/subtitle": {
+			http.MethodGet: {"http://client.local": {}},
+		},
+	}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.WriteHeader(http.StatusOK)
 	}))
 
@@ -44,6 +52,51 @@ func TestWithCORSBlocksUnknownOrigin(t *testing.T) {
 
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
+	}
+}
+
+func TestWithCORSBlocksOriginWhenMethodAllowlistDiffers(t *testing.T) {
+	t.Parallel()
+
+	handler := WithCORS(map[string]map[string]map[string]struct{}{
+		"/subtitle": {
+			http.MethodGet:  {"http://client.local": {}},
+			http.MethodPost: {"http://writer.local": {}},
+		},
+	}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusOK)
+	}))
+
+	request := httptest.NewRequest(http.MethodPost, "/subtitle", nil)
+	request.Header.Set("Origin", "http://client.local")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
+	}
+}
+
+func TestWithCORSBlocksOriginForDifferentRoute(t *testing.T) {
+	t.Parallel()
+
+	handler := WithCORS(map[string]map[string]map[string]struct{}{
+		"/legenda": {
+			http.MethodGet: {"http://client.local": {}},
+		},
+	}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusOK)
+	}))
+
+	request := httptest.NewRequest(http.MethodGet, "/other", nil)
+	request.Header.Set("Origin", "http://client.local")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d for unknown route, got %d", http.StatusForbidden, recorder.Code)
 	}
 }
 
