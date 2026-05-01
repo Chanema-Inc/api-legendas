@@ -109,7 +109,7 @@ Resposta de sucesso:
 }
 ```
 
-### POST /subtitle
+### POST /legenda
 
 Armazena uma legenda referenciada por URL.
 
@@ -117,7 +117,7 @@ Requisicao:
 
 ```json
 {
-	"url": "https://example.com/subtitles/movie.srt"
+	"url": "https://example.com/legenda/movie.srt"
 }
 ```
 
@@ -126,7 +126,7 @@ Resposta de sucesso:
 ```json
 {
 	"id": "c8f8cc0f5b1d4e33ae52e2a763c4e81d",
-	"url": "https://example.com/subtitles/movie.srt"
+	"url": "https://example.com/legenda/movie.srt"
 }
 ```
 
@@ -139,7 +139,7 @@ Erros possiveis:
 - `502 Bad Gateway`: nao foi possivel buscar a legenda remota
 - `500 Internal Server Error`: falha interna de persistencia ou geracao de identificador
 
-### GET /subtitle
+### GET /legenda
 
 Retorna a URL da ultima legenda valida armazenada em cache.
 
@@ -148,7 +148,7 @@ Resposta de sucesso:
 ```json
 {
 	"id": "c8f8cc0f5b1d4e33ae52e2a763c4e81d",
-	"url": "https://example.com/subtitles/movie.srt"
+	"url": "https://example.com/legenda/movie.srt"
 }
 ```
 
@@ -201,7 +201,7 @@ Notas de implementacao:
 Notas de comportamento:
 
 - `/health` e excluida da limitacao de taxa de requisicoes.
-- Requisicoes para `/subtitle` recebem limitacao de taxa por `RemoteAddr`.
+- Requisicoes para `/legenda` recebem limitacao de taxa por `RemoteAddr`.
 
 Configuracao:
 
