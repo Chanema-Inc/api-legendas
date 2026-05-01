@@ -32,6 +32,12 @@ func TestLoadUsesEnvironmentVariablesBeforeDevDefaults(t *testing.T) {
 	if _, ok := config.AllowedOrigins["http://override.local"]; !ok {
 		t.Fatal("expected overridden allowed origin to be loaded")
 	}
+	if _, ok := config.AllowedOriginsByMethod["POST"]["http://override.local"]; !ok {
+		t.Fatal("expected overridden allowed origin to be loaded for POST")
+	}
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["POST"]["http://override.local"]; !ok {
+		t.Fatal("expected overridden allowed origin to be loaded for POST /legenda")
+	}
 	if _, ok := config.AllowedProbeIPs["127.0.0.1"]; !ok {
 		t.Fatal("expected probe allowed ip to be loaded")
 	}
@@ -63,6 +69,12 @@ func TestLoadFallsBackToDevValuesInProductionWhenEnvVarIsMissing(t *testing.T) {
 	if _, ok := config.AllowedOrigins["http://admin.local"]; !ok {
 		t.Fatal("expected fallback allowed origins to be loaded")
 	}
+	if _, ok := config.AllowedOriginsByMethod["GET"]["http://admin.local"]; !ok {
+		t.Fatal("expected fallback allowed origins to be loaded for GET")
+	}
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["GET"]["http://admin.local"]; !ok {
+		t.Fatal("expected fallback allowed origins to be loaded for GET /legenda")
+	}
 	if !config.HealthProtectionEnabled {
 		t.Fatal("expected health protection fallback to be enabled")
 	}
@@ -83,6 +95,64 @@ func TestLoadReadsHealthProtectionEnabledFromEnv(t *testing.T) {
 
 	if config.HealthProtectionEnabled {
 		t.Fatal("expected health protection to be disabled by env override")
+	}
+}
+
+func TestLoadSupportsMethodSpecificAllowedOrigins(t *testing.T) {
+	rootDir := t.TempDir()
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "ALLOWED_ORIGINS=http://default.local\nALLOWED_ORIGINS_GET=https://watch.local\nALLOWED_ORIGINS_POST=https://bot.local\n")
+	writeFile(t, filepath.Join(rootDir, ".env.prod"), "ALLOWED_ORIGINS=\nALLOWED_ORIGINS_GET=\nALLOWED_ORIGINS_POST=\n")
+
+	config, err := Load(rootDir)
+	if err != nil {
+		t.Fatalf("expected config to load successfully, got error: %v", err)
+	}
+
+	if _, ok := config.AllowedOriginsByMethod["GET"]["https://watch.local"]; !ok {
+		t.Fatal("expected GET origin to use method-specific allowlist")
+	}
+
+	if _, ok := config.AllowedOriginsByMethod["POST"]["https://bot.local"]; !ok {
+		t.Fatal("expected POST origin to use method-specific allowlist")
+	}
+
+	if _, ok := config.AllowedOriginsByMethod["POST"]["http://default.local"]; ok {
+		t.Fatal("expected POST origin list to not include default when method-specific list is provided")
+	}
+
+	if _, ok := config.AllowedOriginsByMethod["OPTIONS"]["http://default.local"]; !ok {
+		t.Fatal("expected OPTIONS origin list to fallback to default allowlist")
+	}
+}
+
+func TestLoadSupportsRouteAndMethodSpecificAllowedOrigins(t *testing.T) {
+	rootDir := t.TempDir()
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "ALLOWED_ORIGINS=http://default.local\nALLOWED_ORIGINS_LEGENDA_GET=https://cytube.local\nALLOWED_ORIGINS_LEGENDA_POST=https://bot.local\n")
+	writeFile(t, filepath.Join(rootDir, ".env.prod"), "ALLOWED_ORIGINS=\nALLOWED_ORIGINS_LEGENDA_GET=\nALLOWED_ORIGINS_LEGENDA_POST=\n")
+
+	config, err := Load(rootDir)
+	if err != nil {
+		t.Fatalf("expected config to load successfully, got error: %v", err)
+	}
+
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["GET"]["https://cytube.local"]; !ok {
+		t.Fatal("expected route-specific GET origin for /legenda")
+	}
+
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["POST"]["https://bot.local"]; !ok {
+		t.Fatal("expected route-specific POST origin for /legenda")
+	}
+
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["POST"]["http://default.local"]; ok {
+		t.Fatal("expected route-specific POST list to not include global default when overridden")
+	}
+
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["OPTIONS"]["http://default.local"]; !ok {
+		t.Fatal("expected OPTIONS for /legenda to fallback to global default")
+	}
+
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/health"]["GET"]["http://default.local"]; !ok {
+		t.Fatal("expected GET for /health to fallback to global default")
 	}
 }
 

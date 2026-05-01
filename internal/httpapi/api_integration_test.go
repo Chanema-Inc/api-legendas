@@ -38,7 +38,16 @@ func newServer(maxFileSize int64, ttl time.Duration, fetcher service.Fetcher, li
 
 	mux := http.NewServeMux()
 	httpapi.RegisterRoutes(mux, httpController)
-	return httpapi.WithCORS(allowedOrigins, httpapi.WithProbeIPAllowlist(true, map[string]struct{}{}, httpapi.WithRateLimit(limiter, mux)))
+	return httpapi.WithCORS(map[string]map[string]map[string]struct{}{
+		"/legenda": {
+			http.MethodGet:     allowedOrigins,
+			http.MethodPost:    allowedOrigins,
+			http.MethodOptions: allowedOrigins,
+		},
+		"/health": {
+			http.MethodGet: allowedOrigins,
+		},
+	}, httpapi.WithProbeIPAllowlist(true, map[string]struct{}{}, httpapi.WithRateLimit(limiter, mux)))
 }
 
 func newDefaultTestServer(t *testing.T) http.Handler {
@@ -225,7 +234,7 @@ func TestGetLegendaReturnsNotFoundWhenLatestSubtitleExpired(t *testing.T) {
 func TestAllowedOriginReceivesCORSHeaders(t *testing.T) {
 	t.Parallel()
 	server := newDefaultTestServer(t)
-	request := httptest.NewRequest(http.MethodOptions, "/subtitle", nil)
+	request := httptest.NewRequest(http.MethodOptions, "/legenda", nil)
 	request.Header.Set("Origin", "http://client.local")
 	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
 	recorder := httptest.NewRecorder()
@@ -243,7 +252,7 @@ func TestAllowedOriginReceivesCORSHeaders(t *testing.T) {
 func TestBlockedOriginDoesNotReceiveCORSHeaders(t *testing.T) {
 	t.Parallel()
 	server := newDefaultTestServer(t)
-	request := httptest.NewRequest(http.MethodPost, "/subtitle", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
+	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "http://blocked.local")
 	recorder := httptest.NewRecorder()
