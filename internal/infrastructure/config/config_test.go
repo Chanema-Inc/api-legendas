@@ -193,6 +193,28 @@ func TestLoadSupportsRedisBackendSettings(t *testing.T) {
 	}
 }
 
+func TestLoadSupportsUpstashRedisURL(t *testing.T) {
+	rootDir := t.TempDir()
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "STORAGE_BACKEND=redis\nUPSTASH_REDIS_URL=rediss://default:secret@global-hero-12345.upstash.io:6379\nCACHE_TTL=10m\n")
+	writeFile(t, filepath.Join(rootDir, ".env.prod"), "STORAGE_BACKEND=\nUPSTASH_REDIS_URL=\nCACHE_TTL=\n")
+
+	config, err := Load(rootDir)
+	if err != nil {
+		t.Fatalf("expected config to load successfully, got error: %v", err)
+	}
+
+	if config.Storage != "redis" {
+		t.Fatalf("expected redis storage backend, got %q", config.Storage)
+	}
+
+	if config.UpstashRedisURL != "rediss://default:secret@global-hero-12345.upstash.io:6379" {
+		t.Fatalf("expected upstash redis url to be loaded, got %q", config.UpstashRedisURL)
+	}
+	if config.RedisAddr != "" {
+		t.Fatalf("expected redis addr to remain empty, got %q", config.RedisAddr)
+	}
+}
+
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

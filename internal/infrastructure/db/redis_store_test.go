@@ -10,6 +10,62 @@ import (
 	miniredis "github.com/alicebob/miniredis/v2"
 )
 
+func TestRedisOptionsFromConfigUsesTCPForPlainAddress(t *testing.T) {
+	t.Parallel()
+
+	options, err := redisOptionsFromConfig(RedisConfig{
+		Addr:     "localhost:6379",
+		Password: "secret",
+		DB:       3,
+	})
+	if err != nil {
+		t.Fatalf("expected plain redis config to succeed, got error: %v", err)
+	}
+	if options.Network != "tcp" {
+		t.Fatalf("expected network tcp, got %q", options.Network)
+	}
+	if options.Addr != "localhost:6379" {
+		t.Fatalf("expected addr localhost:6379, got %q", options.Addr)
+	}
+	if options.Password != "secret" {
+		t.Fatalf("expected password secret, got %q", options.Password)
+	}
+	if options.DB != 3 {
+		t.Fatalf("expected db 3, got %d", options.DB)
+	}
+}
+
+func TestRedisOptionsFromConfigParsesUpstashURL(t *testing.T) {
+	t.Parallel()
+
+	options, err := redisOptionsFromConfig(RedisConfig{
+		UpstashURL: "rediss://default:secret@global-hero-12345.upstash.io:6379",
+	})
+	if err != nil {
+		t.Fatalf("expected upstash url parsing to succeed, got error: %v", err)
+	}
+	if options.Network != "tcp" {
+		t.Fatalf("expected network tcp, got %q", options.Network)
+	}
+	if options.Addr != "global-hero-12345.upstash.io:6379" {
+		t.Fatalf("expected upstash addr, got %q", options.Addr)
+	}
+	if options.Password != "secret" {
+		t.Fatalf("expected parsed password, got %q", options.Password)
+	}
+	if options.TLSConfig == nil {
+		t.Fatal("expected rediss upstash url to enable tls")
+	}
+}
+
+func TestRedisOptionsFromConfigReturnsErrorForInvalidUpstashURL(t *testing.T) {
+	t.Parallel()
+
+	if _, err := redisOptionsFromConfig(RedisConfig{UpstashURL: "rediss://%zz"}); err == nil {
+		t.Fatal("expected invalid upstash url to fail")
+	}
+}
+
 func TestRedisStoreSaveAndLatest(t *testing.T) {
 	t.Parallel()
 
