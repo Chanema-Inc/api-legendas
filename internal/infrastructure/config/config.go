@@ -14,6 +14,7 @@ type RuntimeConfig struct {
 	Environment             string
 	Port                    string
 	Storage                 string
+	UpstashRedisURL         string
 	RedisAddr               string
 	RedisPassword           string
 	RedisDB                 int
@@ -87,6 +88,7 @@ func Load(rootDir string) (RuntimeConfig, error) {
 		Environment:             environment,
 		Port:                    port,
 		Storage:                 firstNonEmpty(resolveSetting("STORAGE_BACKEND", selectedValues), "memory_cache"),
+		UpstashRedisURL:         resolveSetting("UPSTASH_REDIS_URL", selectedValues),
 		RedisAddr:               resolveSetting("REDIS_ADDR", selectedValues),
 		RedisPassword:           resolveSetting("REDIS_PASSWORD", selectedValues),
 		RedisDB:                 redisDB,
