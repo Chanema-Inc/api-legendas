@@ -54,15 +54,15 @@ func main() {
 	}
 
 	server := app.NewServer(app.Config{
-		BaseURL:                 "http://localhost:" + appConfig.Port,
-		MaxFileSize:             appConfig.MaxSubtitleSizeBytes,
-		DefaultTTL:              appConfig.CacheTTL,
-		Store:                   store,
-		Fetcher:                 app.NewHTTPFetcher(10 * time.Second),
-		RateLimiter:             httpapi.NewRateLimiter(appConfig.RateLimitBurst, appConfig.RateLimitWindow),
-		AllowedOrigins:          appConfig.AllowedOrigins,
-		AllowedProbeIPs:         appConfig.AllowedProbeIPs,
-		HealthProtectionEnabled: appConfig.HealthProtectionEnabled,
+		BaseURL:                        "http://localhost:" + appConfig.Port,
+		MaxFileSize:                    appConfig.MaxSubtitleSizeBytes,
+		DefaultTTL:                     appConfig.CacheTTL,
+		Store:                          store,
+		Fetcher:                        app.NewHTTPFetcher(10 * time.Second),
+		RateLimiter:                    httpapi.NewRateLimiter(appConfig.RateLimitBurst, appConfig.RateLimitWindow),
+		AllowedOriginsByRouteAndMethod: appConfig.AllowedOriginsByRouteAndMethod,
+		AllowedProbeIPs:                appConfig.AllowedProbeIPs,
+		HealthProtectionEnabled:        appConfig.HealthProtectionEnabled,
 	})
 
 	log.Fatal(http.ListenAndServe(":"+appConfig.Port, server.Routes()))

@@ -11,43 +11,43 @@ import (
 )
 
 type Server struct {
-	baseURL                 string
-	maxFileSize             int64
-	defaultTTL              time.Duration
-	store                   service.Store
-	fetcher                 service.Fetcher
-	subtitleController      *controller.HTTPController
-	subtitleService         *service.SubtitleService
-	rateLimiter             *httpapi.RateLimiter
-	allowedOrigins          map[string]struct{}
-	allowedProbeIPs         map[string]struct{}
-	healthProtectionEnabled bool
-	handler                 http.Handler
+	baseURL                        string
+	maxFileSize                    int64
+	defaultTTL                     time.Duration
+	store                          service.Store
+	fetcher                        service.Fetcher
+	subtitleController             *controller.HTTPController
+	subtitleService                *service.SubtitleService
+	rateLimiter                    *httpapi.RateLimiter
+	allowedOriginsByRouteAndMethod map[string]map[string]map[string]struct{}
+	allowedProbeIPs                map[string]struct{}
+	healthProtectionEnabled        bool
+	handler                        http.Handler
 }
 
 type Config struct {
-	BaseURL                 string
-	MaxFileSize             int64
-	DefaultTTL              time.Duration
-	Store                   service.Store
-	Fetcher                 service.Fetcher
-	RateLimiter             *httpapi.RateLimiter
-	AllowedOrigins          map[string]struct{}
-	AllowedProbeIPs         map[string]struct{}
-	HealthProtectionEnabled bool
+	BaseURL                        string
+	MaxFileSize                    int64
+	DefaultTTL                     time.Duration
+	Store                          service.Store
+	Fetcher                        service.Fetcher
+	RateLimiter                    *httpapi.RateLimiter
+	AllowedOriginsByRouteAndMethod map[string]map[string]map[string]struct{}
+	AllowedProbeIPs                map[string]struct{}
+	HealthProtectionEnabled        bool
 }
 
 func NewServer(config Config) *Server {
 	server := &Server{
-		baseURL:                 config.BaseURL,
-		maxFileSize:             config.MaxFileSize,
-		defaultTTL:              config.DefaultTTL,
-		store:                   config.Store,
-		fetcher:                 config.Fetcher,
-		rateLimiter:             config.RateLimiter,
-		allowedOrigins:          config.AllowedOrigins,
-		allowedProbeIPs:         config.AllowedProbeIPs,
-		healthProtectionEnabled: config.HealthProtectionEnabled,
+		baseURL:                        config.BaseURL,
+		maxFileSize:                    config.MaxFileSize,
+		defaultTTL:                     config.DefaultTTL,
+		store:                          config.Store,
+		fetcher:                        config.Fetcher,
+		rateLimiter:                    config.RateLimiter,
+		allowedOriginsByRouteAndMethod: config.AllowedOriginsByRouteAndMethod,
+		allowedProbeIPs:                config.AllowedProbeIPs,
+		healthProtectionEnabled:        config.HealthProtectionEnabled,
 	}
 	server.ensureDefaults()
 	return server
@@ -61,7 +61,7 @@ func (server *Server) Routes() http.Handler {
 
 	mux := http.NewServeMux()
 	httpapi.RegisterRoutes(mux, server.subtitleController)
-	server.handler = httpapi.WithCORS(server.allowedOrigins,
+	server.handler = httpapi.WithCORS(server.allowedOriginsByRouteAndMethod,
 		httpapi.WithProbeIPAllowlist(server.healthProtectionEnabled, server.allowedProbeIPs,
 			httpapi.WithRateLimit(server.rateLimiter, mux)))
 
@@ -84,8 +84,8 @@ func (server *Server) ensureDefaults() {
 	if server.fetcher == nil {
 		server.fetcher = infrastructure.NewHTTPFetcher(10 * time.Second)
 	}
-	if server.allowedOrigins == nil {
-		server.allowedOrigins = map[string]struct{}{}
+	if server.allowedOriginsByRouteAndMethod == nil {
+		server.allowedOriginsByRouteAndMethod = map[string]map[string]map[string]struct{}{}
 	}
 	if server.allowedProbeIPs == nil {
 		server.allowedProbeIPs = map[string]struct{}{}

@@ -11,20 +11,23 @@ import (
 )
 
 type RuntimeConfig struct {
-	Environment             string
-	Port                    string
-	Storage                 string
-	RedisAddr               string
-	RedisPassword           string
-	RedisDB                 int
-	RedisKeyPrefix          string
-	MaxSubtitleSizeBytes    int64
-	AllowedOrigins          map[string]struct{}
-	AllowedProbeIPs         map[string]struct{}
-	HealthProtectionEnabled bool
-	CacheTTL                time.Duration
-	RateLimitBurst          int
-	RateLimitWindow         time.Duration
+	Environment                    string
+	Port                           string
+	Storage                        string
+	UpstashRedisURL                string
+	RedisAddr                      string
+	RedisPassword                  string
+	RedisDB                        int
+	RedisKeyPrefix                 string
+	MaxSubtitleSizeBytes           int64
+	AllowedOrigins                 map[string]struct{}
+	AllowedOriginsByMethod         map[string]map[string]struct{}
+	AllowedOriginsByRouteAndMethod map[string]map[string]map[string]struct{}
+	AllowedProbeIPs                map[string]struct{}
+	HealthProtectionEnabled        bool
+	CacheTTL                       time.Duration
+	RateLimitBurst                 int
+	RateLimitWindow                time.Duration
 }
 
 func Load(rootDir string) (RuntimeConfig, error) {
@@ -83,21 +86,26 @@ func Load(rootDir string) (RuntimeConfig, error) {
 		return RuntimeConfig{}, err
 	}
 
+	allowedOrigins := parseOrigins(resolveSetting("ALLOWED_ORIGINS", selectedValues))
+
 	return RuntimeConfig{
-		Environment:             environment,
-		Port:                    port,
-		Storage:                 firstNonEmpty(resolveSetting("STORAGE_BACKEND", selectedValues), "memory_cache"),
-		RedisAddr:               resolveSetting("REDIS_ADDR", selectedValues),
-		RedisPassword:           resolveSetting("REDIS_PASSWORD", selectedValues),
-		RedisDB:                 redisDB,
-		RedisKeyPrefix:          firstNonEmpty(resolveSetting("REDIS_KEY_PREFIX", selectedValues), "subtitle-delivery"),
-		MaxSubtitleSizeBytes:    maxSubtitleSizeBytes,
-		AllowedOrigins:          parseOrigins(resolveSetting("ALLOWED_ORIGINS", selectedValues)),
-		AllowedProbeIPs:         parseCSVSet(resolveSetting("PROBE_ALLOWED_IPS", selectedValues)),
-		HealthProtectionEnabled: healthProtectionEnabled,
-		CacheTTL:                cacheTTL,
-		RateLimitBurst:          rateLimitBurst,
-		RateLimitWindow:         rateLimitWindow,
+		Environment:                    environment,
+		Port:                           port,
+		Storage:                        firstNonEmpty(resolveSetting("STORAGE_BACKEND", selectedValues), "memory_cache"),
+		UpstashRedisURL:                resolveSetting("UPSTASH_REDIS_URL", selectedValues),
+		RedisAddr:                      resolveSetting("REDIS_ADDR", selectedValues),
+		RedisPassword:                  resolveSetting("REDIS_PASSWORD", selectedValues),
+		RedisDB:                        redisDB,
+		RedisKeyPrefix:                 firstNonEmpty(resolveSetting("REDIS_KEY_PREFIX", selectedValues), "subtitle-delivery"),
+		MaxSubtitleSizeBytes:           maxSubtitleSizeBytes,
+		AllowedOrigins:                 allowedOrigins,
+		AllowedOriginsByMethod:         parseOriginsByMethod(selectedValues, allowedOrigins),
+		AllowedOriginsByRouteAndMethod: parseOriginsByRouteAndMethod(selectedValues, parseOriginsByMethod(selectedValues, allowedOrigins)),
+		AllowedProbeIPs:                parseCSVSet(resolveSetting("PROBE_ALLOWED_IPS", selectedValues)),
+		HealthProtectionEnabled:        healthProtectionEnabled,
+		CacheTTL:                       cacheTTL,
+		RateLimitBurst:                 rateLimitBurst,
+		RateLimitWindow:                rateLimitWindow,
 	}, nil
 }
 
@@ -168,6 +176,45 @@ func parseOrigins(raw string) map[string]struct{} {
 	return parseCSVSet(raw)
 }
 
+func parseOriginsByMethod(selectedValues map[string]string, fallback map[string]struct{}) map[string]map[string]struct{} {
+	originsByMethod := map[string]map[string]struct{}{}
+
+	for _, method := range []string{"GET", "POST", "OPTIONS"} {
+		raw := resolveSetting("ALLOWED_ORIGINS_"+method, selectedValues)
+		if strings.TrimSpace(raw) != "" {
+			originsByMethod[method] = parseCSVSet(raw)
+			continue
+		}
+
+		originsByMethod[method] = cloneSet(fallback)
+	}
+
+	return originsByMethod
+}
+
+func parseOriginsByRouteAndMethod(selectedValues map[string]string, byMethod map[string]map[string]struct{}) map[string]map[string]map[string]struct{} {
+	routeNames := map[string]string{
+		"LEGENDA": "/legenda",
+		"HEALTH":  "/health",
+	}
+
+	result := map[string]map[string]map[string]struct{}{}
+
+	for routeName, routePath := range routeNames {
+		result[routePath] = map[string]map[string]struct{}{}
+		for _, method := range []string{"GET", "POST", "OPTIONS"} {
+			raw := resolveSetting("ALLOWED_ORIGINS_"+routeName+"_"+method, selectedValues)
+			if strings.TrimSpace(raw) != "" {
+				result[routePath][method] = parseCSVSet(raw)
+				continue
+			}
+			result[routePath][method] = cloneSet(byMethod[method])
+		}
+	}
+
+	return result
+}
+
 func parseCSVSet(raw string) map[string]struct{} {
 	origins := map[string]struct{}{}
 	for _, origin := range strings.Split(raw, ",") {
@@ -177,6 +224,14 @@ func parseCSVSet(raw string) map[string]struct{} {
 		}
 	}
 	return origins
+}
+
+func cloneSet(source map[string]struct{}) map[string]struct{} {
+	cloned := map[string]struct{}{}
+	for value := range source {
+		cloned[value] = struct{}{}
+	}
+	return cloned
 }
 
 func parseDuration(raw string, fallback time.Duration) (time.Duration, error) {
