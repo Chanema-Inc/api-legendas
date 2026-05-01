@@ -17,11 +17,12 @@ func NewStorage(appConfig config.RuntimeConfig) (service.Store, error) {
 		return infrastructure.NewMemoryStore(appConfig.CacheTTL), nil
 	case "redis":
 		return db.NewRedisStore(db.RedisConfig{
-			Addr:      appConfig.RedisAddr,
-			Password:  appConfig.RedisPassword,
-			DB:        appConfig.RedisDB,
-			KeyPrefix: appConfig.RedisKeyPrefix,
-			TTL:       appConfig.CacheTTL,
+			UpstashURL: appConfig.UpstashRedisURL,
+			Addr:       appConfig.RedisAddr,
+			Password:   appConfig.RedisPassword,
+			DB:         appConfig.RedisDB,
+			KeyPrefix:  appConfig.RedisKeyPrefix,
+			TTL:        appConfig.CacheTTL,
 		})
 	default:
 		return nil, fmt.Errorf("unsupported storage backend: %s", appConfig.Storage)

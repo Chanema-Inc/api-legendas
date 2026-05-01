@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	domain "subtitle-delivery/internal/domain"
@@ -13,11 +14,12 @@ import (
 )
 
 type RedisConfig struct {
-	Addr      string
-	Password  string
-	DB        int
-	KeyPrefix string
-	TTL       time.Duration
+	UpstashURL string
+	Addr       string
+	Password   string
+	DB         int
+	KeyPrefix  string
+	TTL        time.Duration
 }
 
 type RedisStore struct {
@@ -27,7 +29,7 @@ type RedisStore struct {
 }
 
 func NewRedisStore(config RedisConfig) (*RedisStore, error) {
-	if config.Addr == "" {
+	if strings.TrimSpace(config.UpstashURL) == "" && strings.TrimSpace(config.Addr) == "" {
 		return nil, errors.New("redis address is required")
 	}
 	if config.KeyPrefix == "" {
@@ -37,11 +39,12 @@ func NewRedisStore(config RedisConfig) (*RedisStore, error) {
 		config.TTL = 10 * time.Minute
 	}
 
-	client := redis.NewClient(&redis.Options{
-		Addr:     config.Addr,
-		Password: config.Password,
-		DB:       config.DB,
-	})
+	options, err := redisOptionsFromConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	client := redis.NewClient(options)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -53,6 +56,26 @@ func NewRedisStore(config RedisConfig) (*RedisStore, error) {
 		client:    client,
 		keyPrefix: config.KeyPrefix,
 		ttl:       config.TTL,
+	}, nil
+}
+
+func redisOptionsFromConfig(config RedisConfig) (*redis.Options, error) {
+	if upstashURL := strings.TrimSpace(config.UpstashURL); upstashURL != "" {
+		options, err := redis.ParseURL(upstashURL)
+		if err != nil {
+			return nil, err
+		}
+		if options.Network == "" {
+			options.Network = "tcp"
+		}
+		return options, nil
+	}
+
+	return &redis.Options{
+		Network:  "tcp",
+		Addr:     strings.TrimSpace(config.Addr),
+		Password: config.Password,
+		DB:       config.DB,
 	}, nil
 }
 
