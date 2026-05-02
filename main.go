@@ -61,8 +61,6 @@ func main() {
 		Fetcher:                        app.NewHTTPFetcher(10 * time.Second),
 		RateLimiter:                    httpapi.NewRateLimiter(appConfig.RateLimitBurst, appConfig.RateLimitWindow),
 		AllowedOriginsByRouteAndMethod: appConfig.AllowedOriginsByRouteAndMethod,
-		AllowedProbeIPs:                appConfig.AllowedProbeIPs,
-		HealthProtectionEnabled:        appConfig.HealthProtectionEnabled,
 	})
 
 	log.Fatal(http.ListenAndServe(":"+appConfig.Port, server.Routes()))

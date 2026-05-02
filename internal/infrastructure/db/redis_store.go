@@ -92,7 +92,15 @@ func (store *RedisStore) Save(ctx context.Context, record domain.Subtitle) error
 		return err
 	}
 
+	prevRaw, _ := store.client.Get(ctx, store.latestKey()).Result()
+
 	pipe := store.client.TxPipeline()
+	if prevRaw != "" {
+		var prev domain.Subtitle
+		if json.Unmarshal([]byte(prevRaw), &prev) == nil && prev.ID != record.ID {
+			pipe.Del(ctx, store.subtitleKey(prev.ID))
+		}
+	}
 	pipe.Set(ctx, store.subtitleKey(record.ID), encoded, store.ttl)
 	pipe.Set(ctx, store.latestKey(), encoded, store.ttl)
 	_, err = pipe.Exec(ctx)

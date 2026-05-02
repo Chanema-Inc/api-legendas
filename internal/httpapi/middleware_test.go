@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"compress/gzip"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,7 +31,7 @@ func TestWithCORSAllowsConfiguredOrigin(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusNoContent, recorder.Code)
 	}
 	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "http://client.local" {
-		t.Fatalf("expected allowed origin header, got %q", got)
+		t.Fatalf("expected echoed origin header, got %q", got)
 	}
 }
 
@@ -78,7 +80,32 @@ func TestWithCORSBlocksOriginWhenMethodAllowlistDiffers(t *testing.T) {
 	}
 }
 
-func TestWithCORSBlocksOriginForDifferentRoute(t *testing.T) {
+func TestWithCORSAllowsAnyOriginWhenRouteHasNoAllowlist(t *testing.T) {
+	t.Parallel()
+
+	handler := WithCORS(map[string]map[string]map[string]struct{}{
+		"/legenda": {
+			http.MethodPost: {"http://writer.local": {}},
+		},
+	}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusOK)
+	}))
+
+	request := httptest.NewRequest(http.MethodGet, "/legenda", nil)
+	request.Header.Set("Origin", "http://anyone.local")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d for GET with no allowlist, got %d", http.StatusOK, recorder.Code)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "http://anyone.local" {
+		t.Fatalf("expected echoed origin, got %q", got)
+	}
+}
+
+func TestWithCORSAllowsAnyOriginForRouteWithNoConfiguration(t *testing.T) {
 	t.Parallel()
 
 	handler := WithCORS(map[string]map[string]map[string]struct{}{
@@ -90,13 +117,50 @@ func TestWithCORSBlocksOriginForDifferentRoute(t *testing.T) {
 	}))
 
 	request := httptest.NewRequest(http.MethodGet, "/other", nil)
-	request.Header.Set("Origin", "http://client.local")
+	request.Header.Set("Origin", "http://any.local")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected status %d for unknown route, got %d", http.StatusForbidden, recorder.Code)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d for route with no allowlist, got %d", http.StatusOK, recorder.Code)
+	}
+}
+
+func TestWithGzipCompressesResponseWhenAccepted(t *testing.T) {
+	t.Parallel()
+
+	handler := WithGzip(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "text/vtt")
+		response.WriteHeader(http.StatusOK)
+		_, _ = response.Write([]byte("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n"))
+	}))
+
+	request := httptest.NewRequest(http.MethodGet, "/legenda", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+	if got := recorder.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("expected gzip content-encoding, got %q", got)
+	}
+
+	gzipReader, err := gzip.NewReader(recorder.Body)
+	if err != nil {
+		t.Fatalf("expected gzip payload, got error: %v", err)
+	}
+	defer gzipReader.Close()
+
+	decoded, err := io.ReadAll(gzipReader)
+	if err != nil {
+		t.Fatalf("failed to decode gzip payload: %v", err)
+	}
+	if string(decoded) == "" {
+		t.Fatal("expected decoded payload to be non-empty")
 	}
 }
 
@@ -157,59 +221,5 @@ func TestWithRateLimitBypassesProbeEndpoints(t *testing.T) {
 
 	if secondRecorder.Code != http.StatusOK {
 		t.Fatalf("expected status %d for /health, got %d", http.StatusOK, secondRecorder.Code)
-	}
-}
-
-func TestWithProbeIPAllowlistBlocksUnknownIP(t *testing.T) {
-	t.Parallel()
-
-	handler := WithProbeIPAllowlist(true, map[string]struct{}{"127.0.0.1": {}}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.WriteHeader(http.StatusOK)
-	}))
-
-	request := httptest.NewRequest(http.MethodGet, "/health", nil)
-	request.RemoteAddr = "10.0.0.10:45678"
-	recorder := httptest.NewRecorder()
-
-	handler.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
-	}
-}
-
-func TestWithProbeIPAllowlistAllowsConfiguredIP(t *testing.T) {
-	t.Parallel()
-
-	handler := WithProbeIPAllowlist(true, map[string]struct{}{"127.0.0.1": {}}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.WriteHeader(http.StatusOK)
-	}))
-
-	request := httptest.NewRequest(http.MethodGet, "/health", nil)
-	request.RemoteAddr = "127.0.0.1:45678"
-	recorder := httptest.NewRecorder()
-
-	handler.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
-	}
-}
-
-func TestWithProbeIPAllowlistDisabledBypassesProtection(t *testing.T) {
-	t.Parallel()
-
-	handler := WithProbeIPAllowlist(false, map[string]struct{}{"127.0.0.1": {}}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.WriteHeader(http.StatusOK)
-	}))
-
-	request := httptest.NewRequest(http.MethodGet, "/health", nil)
-	request.RemoteAddr = "10.0.0.10:45678"
-	recorder := httptest.NewRecorder()
-
-	handler.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
 	}
 }

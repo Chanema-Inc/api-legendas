@@ -2,9 +2,11 @@ package httpapi_test
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -45,9 +47,10 @@ func newServer(maxFileSize int64, ttl time.Duration, fetcher service.Fetcher, li
 			http.MethodOptions: allowedOrigins,
 		},
 		"/health": {
-			http.MethodGet: allowedOrigins,
+			http.MethodGet:     allowedOrigins,
+			http.MethodOptions: allowedOrigins,
 		},
-	}, httpapi.WithProbeIPAllowlist(true, map[string]struct{}{}, httpapi.WithRateLimit(limiter, mux)))
+	}, httpapi.WithGzip(httpapi.WithRateLimit(limiter, mux)))
 }
 
 func newDefaultTestServer(t *testing.T) http.Handler {
@@ -65,7 +68,7 @@ func createSubtitle(t *testing.T, server http.Handler, subtitleURL string) {
 	t.Helper()
 
 	body := bytes.NewBufferString(`{"url":"` + subtitleURL + `"}`)
-	request := httptest.NewRequest(http.MethodPost, "/subtitle", body)
+	request := httptest.NewRequest(http.MethodPost, "/legenda", body)
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
@@ -81,7 +84,7 @@ func TestPostLegendaStoresSubtitleAndReturnsLocation(t *testing.T) {
 	server := newDefaultTestServer(t)
 
 	body := bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`)
-	request := httptest.NewRequest(http.MethodPost, "/subtitle", body)
+	request := httptest.NewRequest(http.MethodPost, "/legenda", body)
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
@@ -114,26 +117,22 @@ func TestGetLegendaReturnsLatestStoredSubtitle(t *testing.T) {
 	server := newDefaultTestServer(t)
 	createSubtitle(t, server, "https://example.com/movie.vtt")
 
-	request := httptest.NewRequest(http.MethodGet, "/subtitle", nil)
+	request := httptest.NewRequest(http.MethodGet, "/legenda", nil)
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
 	}
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "text/vtt" {
+		t.Fatalf("expected content type text/vtt, got %q", contentType)
+	}
 
-	var response struct {
-		ID  string `json:"id"`
-		URL string `json:"url"`
+	if body := recorder.Body.String(); body == "" {
+		t.Fatal("expected subtitle body content")
 	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("expected valid JSON response, got error: %v", err)
-	}
-	if response.ID == "" || response.URL == "" {
-		t.Fatal("expected subtitle id and url in response")
-	}
-	if response.URL != "https://example.com/movie.vtt" {
-		t.Fatalf("expected original source url, got %q", response.URL)
+	if !bytes.Contains(recorder.Body.Bytes(), []byte("WEBVTT")) {
+		t.Fatal("expected WEBVTT payload in response")
 	}
 }
 
@@ -142,7 +141,7 @@ func TestPostLegendaRejectsUnsupportedSubtitleExtension(t *testing.T) {
 	server := newDefaultTestServer(t)
 
 	body := bytes.NewBufferString(`{"url":"https://example.com/file.txt"}`)
-	request := httptest.NewRequest(http.MethodPost, "/subtitle", body)
+	request := httptest.NewRequest(http.MethodPost, "/legenda", body)
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
@@ -158,7 +157,7 @@ func TestPostLegendaRejectsMaliciousSubtitleContent(t *testing.T) {
 	server := newServer(300*1024, 10*time.Minute, stubFetcher{body: []byte("WEBVTT\n\n<script>alert('x')</script>\n")}, httpapi.NewRateLimiter(60, time.Minute), map[string]struct{}{"http://client.local": {}})
 
 	body := bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`)
-	request := httptest.NewRequest(http.MethodPost, "/subtitle", body)
+	request := httptest.NewRequest(http.MethodPost, "/legenda", body)
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
@@ -174,18 +173,15 @@ func TestPostLegendaAcceptsSRTAndKeepsSourceURL(t *testing.T) {
 	server := newServer(300*1024, 10*time.Minute, stubFetcher{body: []byte("1\n00:00:00,000 --> 00:00:01,500\nHello\n")}, httpapi.NewRateLimiter(60, time.Minute), map[string]struct{}{"http://client.local": {}})
 	createSubtitle(t, server, "https://example.com/movie.srt")
 
-	request := httptest.NewRequest(http.MethodGet, "/subtitle", nil)
+	request := httptest.NewRequest(http.MethodGet, "/legenda", nil)
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 
-	var response struct {
-		URL string `json:"url"`
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "text/vtt" {
+		t.Fatalf("expected content type text/vtt, got %q", contentType)
 	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("expected valid JSON response, got error: %v", err)
-	}
-	if response.URL != "https://example.com/movie.srt" {
-		t.Fatalf("expected original source url, got %q", response.URL)
+	if !bytes.Contains(recorder.Body.Bytes(), []byte("Hello")) {
+		t.Fatal("expected subtitle payload in response")
 	}
 }
 
@@ -193,7 +189,7 @@ func TestPostLegendaRejectsEmptyFetchedContent(t *testing.T) {
 	t.Parallel()
 	server := newServer(300*1024, 10*time.Minute, stubFetcher{body: []byte("   ")}, httpapi.NewRateLimiter(60, time.Minute), map[string]struct{}{"http://client.local": {}})
 
-	request := httptest.NewRequest(http.MethodPost, "/subtitle", bytes.NewBufferString(`{"url":"https://example.com/movie.srt"}`))
+	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.srt"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -206,7 +202,7 @@ func TestPostLegendaRejectsEmptyFetchedContent(t *testing.T) {
 func TestGetLegendaReturnsNotFoundWhenCacheIsEmpty(t *testing.T) {
 	t.Parallel()
 	server := newDefaultTestServer(t)
-	request := httptest.NewRequest(http.MethodGet, "/subtitle", nil)
+	request := httptest.NewRequest(http.MethodGet, "/legenda", nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, request)
@@ -222,7 +218,7 @@ func TestGetLegendaReturnsNotFoundWhenLatestSubtitleExpired(t *testing.T) {
 	createSubtitle(t, server, "https://example.com/movie.vtt")
 	time.Sleep(5 * time.Millisecond)
 
-	request := httptest.NewRequest(http.MethodGet, "/subtitle", nil)
+	request := httptest.NewRequest(http.MethodGet, "/legenda", nil)
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 
@@ -245,11 +241,11 @@ func TestAllowedOriginReceivesCORSHeaders(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusNoContent, recorder.Code)
 	}
 	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "http://client.local" {
-		t.Fatalf("expected allowed origin header, got %q", got)
+		t.Fatalf("expected echoed origin header, got %q", got)
 	}
 }
 
-func TestBlockedOriginDoesNotReceiveCORSHeaders(t *testing.T) {
+func TestBlockedOriginReturnsForbidden(t *testing.T) {
 	t.Parallel()
 	server := newDefaultTestServer(t)
 	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
@@ -269,7 +265,7 @@ func TestRateLimiterBlocksRequestsAfterBurst(t *testing.T) {
 	server := newServer(300*1024, 10*time.Minute, stubFetcher{body: []byte("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello world\n")}, httpapi.NewRateLimiter(2, time.Minute), map[string]struct{}{"http://client.local": {}})
 
 	for attempt := 0; attempt < 2; attempt++ {
-		request := httptest.NewRequest(http.MethodPost, "/subtitle", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
+		request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 		request.Header.Set("Content-Type", "application/json")
 		recorder := httptest.NewRecorder()
 		server.ServeHTTP(recorder, request)
@@ -278,7 +274,7 @@ func TestRateLimiterBlocksRequestsAfterBurst(t *testing.T) {
 		}
 	}
 
-	request := httptest.NewRequest(http.MethodPost, "/subtitle", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
+	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -324,7 +320,7 @@ func TestPostLegendaFetchesSubtitleFromLocalHTTPSource(t *testing.T) {
 
 	createSubtitle(t, server, upstream.URL+"/subtitle.srt")
 
-	request := httptest.NewRequest(http.MethodGet, "/subtitle", nil)
+	request := httptest.NewRequest(http.MethodGet, "/legenda", nil)
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 
@@ -332,14 +328,43 @@ func TestPostLegendaFetchesSubtitleFromLocalHTTPSource(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
 	}
 
-	var response struct {
-		URL string `json:"url"`
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "text/vtt" {
+		t.Fatalf("expected content type text/vtt, got %q", contentType)
 	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("expected valid JSON response, got error: %v", err)
+	if !bytes.Contains(recorder.Body.Bytes(), []byte("Hello from local source")) {
+		t.Fatal("expected fetched subtitle content in response")
 	}
-	if response.URL != upstream.URL+"/subtitle.srt" {
-		t.Fatalf("expected original source URL, got %q", response.URL)
+}
+
+func TestGetLegendaSupportsGzipResponse(t *testing.T) {
+	t.Parallel()
+	server := newDefaultTestServer(t)
+	createSubtitle(t, server, "https://example.com/movie.vtt")
+
+	request := httptest.NewRequest(http.MethodGet, "/legenda", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+	if got := recorder.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("expected content encoding gzip, got %q", got)
+	}
+
+	gzipReader, err := gzip.NewReader(recorder.Body)
+	if err != nil {
+		t.Fatalf("expected gzip response body, got error: %v", err)
+	}
+	defer gzipReader.Close()
+
+	decoded, err := io.ReadAll(gzipReader)
+	if err != nil {
+		t.Fatalf("failed to decode gzip body: %v", err)
+	}
+	if !bytes.Contains(decoded, []byte("WEBVTT")) {
+		t.Fatal("expected decoded WEBVTT payload")
 	}
 }
 
@@ -354,7 +379,7 @@ func TestPostLegendaRejectsFilesLargerThanConfiguredLimit(t *testing.T) {
 		map[string]struct{}{"http://client.local": {}},
 	)
 
-	request := httptest.NewRequest(http.MethodPost, "/subtitle", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
+	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -375,7 +400,7 @@ func TestCreateWithFailingFetcherReturnsBadGateway(t *testing.T) {
 		map[string]struct{}{"http://client.local": {}},
 	)
 
-	request := httptest.NewRequest(http.MethodPost, "/subtitle", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
+	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -396,7 +421,7 @@ func TestLatestWithMissingEntryReturnsNotFound(t *testing.T) {
 		map[string]struct{}{},
 	)
 
-	request := httptest.NewRequest(http.MethodGet, "/subtitle", nil)
+	request := httptest.NewRequest(http.MethodGet, "/legenda", nil)
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 
@@ -409,7 +434,7 @@ func TestCreatesStableResponseShape(t *testing.T) {
 	t.Parallel()
 
 	server := newDefaultTestServer(t)
-	request := httptest.NewRequest(http.MethodPost, "/subtitle", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
+	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)

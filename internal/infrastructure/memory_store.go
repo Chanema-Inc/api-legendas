@@ -27,7 +27,8 @@ func (store *MemoryStore) Save(_ context.Context, record domain.Subtitle) error 
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	store.cleanupExpiredLocked(time.Now().UTC())
+	store.entries = map[string]domain.Subtitle{}
+	store.latest = nil
 	record.ExpiresAt = record.CreatedAt.Add(store.ttl)
 	store.entries[record.ID] = record
 	store.latest = &record

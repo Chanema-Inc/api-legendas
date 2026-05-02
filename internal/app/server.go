@@ -20,8 +20,6 @@ type Server struct {
 	subtitleService                *service.SubtitleService
 	rateLimiter                    *httpapi.RateLimiter
 	allowedOriginsByRouteAndMethod map[string]map[string]map[string]struct{}
-	allowedProbeIPs                map[string]struct{}
-	healthProtectionEnabled        bool
 	handler                        http.Handler
 }
 
@@ -33,8 +31,6 @@ type Config struct {
 	Fetcher                        service.Fetcher
 	RateLimiter                    *httpapi.RateLimiter
 	AllowedOriginsByRouteAndMethod map[string]map[string]map[string]struct{}
-	AllowedProbeIPs                map[string]struct{}
-	HealthProtectionEnabled        bool
 }
 
 func NewServer(config Config) *Server {
@@ -46,8 +42,6 @@ func NewServer(config Config) *Server {
 		fetcher:                        config.Fetcher,
 		rateLimiter:                    config.RateLimiter,
 		allowedOriginsByRouteAndMethod: config.AllowedOriginsByRouteAndMethod,
-		allowedProbeIPs:                config.AllowedProbeIPs,
-		healthProtectionEnabled:        config.HealthProtectionEnabled,
 	}
 	server.ensureDefaults()
 	return server
@@ -62,8 +56,7 @@ func (server *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	httpapi.RegisterRoutes(mux, server.subtitleController)
 	server.handler = httpapi.WithCORS(server.allowedOriginsByRouteAndMethod,
-		httpapi.WithProbeIPAllowlist(server.healthProtectionEnabled, server.allowedProbeIPs,
-			httpapi.WithRateLimit(server.rateLimiter, mux)))
+		httpapi.WithGzip(httpapi.WithRateLimit(server.rateLimiter, mux)))
 
 	return server.handler
 }
@@ -76,7 +69,7 @@ func (server *Server) ensureDefaults() {
 		server.maxFileSize = 300 * 1024
 	}
 	if server.defaultTTL == 0 {
-		server.defaultTTL = 10 * time.Minute
+		server.defaultTTL = 5 * time.Hour
 	}
 	if server.store == nil {
 		server.store = infrastructure.NewMemoryStore(server.defaultTTL)
@@ -86,9 +79,6 @@ func (server *Server) ensureDefaults() {
 	}
 	if server.allowedOriginsByRouteAndMethod == nil {
 		server.allowedOriginsByRouteAndMethod = map[string]map[string]map[string]struct{}{}
-	}
-	if server.allowedProbeIPs == nil {
-		server.allowedProbeIPs = map[string]struct{}{}
 	}
 	if server.rateLimiter == nil {
 		server.rateLimiter = httpapi.NewRateLimiter(60, time.Minute)

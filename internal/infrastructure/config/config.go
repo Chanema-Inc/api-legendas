@@ -20,11 +20,7 @@ type RuntimeConfig struct {
 	RedisDB                        int
 	RedisKeyPrefix                 string
 	MaxSubtitleSizeBytes           int64
-	AllowedOrigins                 map[string]struct{}
-	AllowedOriginsByMethod         map[string]map[string]struct{}
 	AllowedOriginsByRouteAndMethod map[string]map[string]map[string]struct{}
-	AllowedProbeIPs                map[string]struct{}
-	HealthProtectionEnabled        bool
 	CacheTTL                       time.Duration
 	RateLimitBurst                 int
 	RateLimitWindow                time.Duration
@@ -61,7 +57,7 @@ func Load(rootDir string) (RuntimeConfig, error) {
 		return RuntimeConfig{}, err
 	}
 
-	cacheTTL, err := parseDuration(resolveSetting("CACHE_TTL", selectedValues), 10*time.Minute)
+	cacheTTL, err := parseDuration(resolveSetting("CACHE_TTL", selectedValues), 5*time.Hour)
 	if err != nil {
 		return RuntimeConfig{}, err
 	}
@@ -76,17 +72,12 @@ func Load(rootDir string) (RuntimeConfig, error) {
 		return RuntimeConfig{}, err
 	}
 
-	healthProtectionEnabled, err := parseBool(resolveSetting("HEALTH_PROTECTION_ENABLED", selectedValues), true)
-	if err != nil {
-		return RuntimeConfig{}, err
-	}
-
 	redisDB, err := parseInt(resolveSetting("REDIS_DB", selectedValues), 0)
 	if err != nil {
 		return RuntimeConfig{}, err
 	}
 
-	allowedOrigins := parseOrigins(resolveSetting("ALLOWED_ORIGINS", selectedValues))
+	allowedOriginsByRouteAndMethod := parseOriginsByRouteAndMethod(selectedValues)
 
 	return RuntimeConfig{
 		Environment:                    environment,
@@ -98,11 +89,7 @@ func Load(rootDir string) (RuntimeConfig, error) {
 		RedisDB:                        redisDB,
 		RedisKeyPrefix:                 firstNonEmpty(resolveSetting("REDIS_KEY_PREFIX", selectedValues), "subtitle-delivery"),
 		MaxSubtitleSizeBytes:           maxSubtitleSizeBytes,
-		AllowedOrigins:                 allowedOrigins,
-		AllowedOriginsByMethod:         parseOriginsByMethod(selectedValues, allowedOrigins),
-		AllowedOriginsByRouteAndMethod: parseOriginsByRouteAndMethod(selectedValues, parseOriginsByMethod(selectedValues, allowedOrigins)),
-		AllowedProbeIPs:                parseCSVSet(resolveSetting("PROBE_ALLOWED_IPS", selectedValues)),
-		HealthProtectionEnabled:        healthProtectionEnabled,
+		AllowedOriginsByRouteAndMethod: allowedOriginsByRouteAndMethod,
 		CacheTTL:                       cacheTTL,
 		RateLimitBurst:                 rateLimitBurst,
 		RateLimitWindow:                rateLimitWindow,
@@ -172,48 +159,29 @@ func parseEnvFile(path string) (map[string]string, error) {
 	return values, nil
 }
 
-func parseOrigins(raw string) map[string]struct{} {
-	return parseCSVSet(raw)
-}
+func parseOriginsByRouteAndMethod(selectedValues map[string]string) map[string]map[string]map[string]struct{} {
+	legendaPOST := parseCSVSet(resolveSetting("ALLOWED_ORIGINS_LEGENDA_POST", selectedValues))
+	healthGET := parseCSVSet(resolveSetting("ALLOWED_ORIGINS_HEALTH_GET", selectedValues))
 
-func parseOriginsByMethod(selectedValues map[string]string, fallback map[string]struct{}) map[string]map[string]struct{} {
-	originsByMethod := map[string]map[string]struct{}{}
-
-	for _, method := range []string{"GET", "POST", "OPTIONS"} {
-		raw := resolveSetting("ALLOWED_ORIGINS_"+method, selectedValues)
-		if strings.TrimSpace(raw) != "" {
-			originsByMethod[method] = parseCSVSet(raw)
-			continue
-		}
-
-		originsByMethod[method] = cloneSet(fallback)
-	}
-
-	return originsByMethod
-}
-
-func parseOriginsByRouteAndMethod(selectedValues map[string]string, byMethod map[string]map[string]struct{}) map[string]map[string]map[string]struct{} {
-	routeNames := map[string]string{
-		"LEGENDA": "/legenda",
-		"HEALTH":  "/health",
-	}
-
-	result := map[string]map[string]map[string]struct{}{}
-
-	for routeName, routePath := range routeNames {
-		result[routePath] = map[string]map[string]struct{}{}
-		for _, method := range []string{"GET", "POST", "OPTIONS"} {
-			raw := resolveSetting("ALLOWED_ORIGINS_"+routeName+"_"+method, selectedValues)
-			if strings.TrimSpace(raw) != "" {
-				result[routePath][method] = parseCSVSet(raw)
-				continue
-			}
-			result[routePath][method] = cloneSet(byMethod[method])
-		}
+	result := map[string]map[string]map[string]struct{}{
+		"/legenda": {
+			httpMethodPost:    legendaPOST,
+			httpMethodOptions: cloneSet(legendaPOST),
+		},
+		"/health": {
+			httpMethodGet:     healthGET,
+			httpMethodOptions: cloneSet(healthGET),
+		},
 	}
 
 	return result
 }
+
+const (
+	httpMethodGet     = "GET"
+	httpMethodPost    = "POST"
+	httpMethodOptions = "OPTIONS"
+)
 
 func parseCSVSet(raw string) map[string]struct{} {
 	origins := map[string]struct{}{}
@@ -232,6 +200,16 @@ func cloneSet(source map[string]struct{}) map[string]struct{} {
 		cloned[value] = struct{}{}
 	}
 	return cloned
+}
+
+func unionSets(sets ...map[string]struct{}) map[string]struct{} {
+	result := map[string]struct{}{}
+	for _, set := range sets {
+		for value := range set {
+			result[value] = struct{}{}
+		}
+	}
+	return result
 }
 
 func parseDuration(raw string, fallback time.Duration) (time.Duration, error) {
@@ -259,17 +237,6 @@ func parseInt64(raw string, fallback int64) (int64, error) {
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, err
-	}
-	return value, nil
-}
-
-func parseBool(raw string, fallback bool) (bool, error) {
-	if strings.TrimSpace(raw) == "" {
-		return fallback, nil
-	}
-	value, err := strconv.ParseBool(strings.TrimSpace(raw))
-	if err != nil {
-		return false, err
 	}
 	return value, nil
 }
