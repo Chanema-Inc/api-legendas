@@ -52,3 +52,39 @@ func TestMemoryStoreCleanupRemovesExpiredEntries(t *testing.T) {
 		t.Fatal("expected expired subtitle entry to be cleaned up")
 	}
 }
+
+func TestMemoryStoreSaveReplacesExistingSubtitle(t *testing.T) {
+	t.Parallel()
+
+	store := NewMemoryStore(time.Minute)
+
+	first := domain.Subtitle{
+		ID:        "subtitle-1",
+		Content:   "WEBVTT\n\nfirst\n",
+		CreatedAt: time.Now().UTC(),
+	}
+	second := domain.Subtitle{
+		ID:        "subtitle-2",
+		Content:   "WEBVTT\n\nsecond\n",
+		CreatedAt: time.Now().UTC(),
+	}
+
+	if err := store.Save(context.Background(), first); err != nil {
+		t.Fatalf("expected first save to succeed, got error: %v", err)
+	}
+	if err := store.Save(context.Background(), second); err != nil {
+		t.Fatalf("expected second save to succeed, got error: %v", err)
+	}
+
+	if store.Size() != 1 {
+		t.Fatalf("expected only 1 entry after second save, got %d", store.Size())
+	}
+
+	latest, err := store.Latest(context.Background())
+	if err != nil {
+		t.Fatalf("expected latest to succeed, got error: %v", err)
+	}
+	if latest.ID != "subtitle-2" {
+		t.Fatalf("expected latest to be subtitle-2, got %q", latest.ID)
+	}
+}

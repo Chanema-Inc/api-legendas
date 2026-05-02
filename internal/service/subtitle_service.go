@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	domain "subtitle-delivery/internal/domain"
@@ -24,6 +25,7 @@ type SubtitleService struct {
 	defaultTTL  time.Duration
 	store       Store
 	fetcher     Fetcher
+	sourceLocks sync.Map
 }
 
 type CreateResult struct {
@@ -44,6 +46,10 @@ func (service *SubtitleService) CreateSubtitle(ctx context.Context, sourceURL st
 	if err := domain.ValidateSubtitleURL(sourceURL); err != nil {
 		return CreateResult{}, err
 	}
+
+	lock := service.getSourceLock(sourceURL)
+	lock.Lock()
+	defer lock.Unlock()
 
 	body, err := service.fetcher.Fetch(ctx, sourceURL, service.maxFileSize)
 	if err != nil {
@@ -66,7 +72,7 @@ func (service *SubtitleService) CreateSubtitle(ctx context.Context, sourceURL st
 		ID:        id,
 		SourceURL: sourceURL,
 		AccessURL: sourceURL,
-		Content:   "",
+		Content:   string(body),
 		CreatedAt: time.Now().UTC(),
 		ExpiresAt: time.Now().UTC().Add(service.defaultTTL),
 		Valid:     true,
@@ -84,4 +90,9 @@ func (service *SubtitleService) CreateSubtitle(ctx context.Context, sourceURL st
 
 func (service *SubtitleService) LatestSubtitle(ctx context.Context) (domain.Subtitle, error) {
 	return service.store.Latest(ctx)
+}
+
+func (service *SubtitleService) getSourceLock(sourceURL string) *sync.Mutex {
+	lock, _ := service.sourceLocks.LoadOrStore(sourceURL, &sync.Mutex{})
+	return lock.(*sync.Mutex)
 }

@@ -168,6 +168,56 @@ func TestRedisStoreLatestReturnsErrorAfterTTLExpiration(t *testing.T) {
 	}
 }
 
+func TestRedisStoreSaveReplacesExistingSubtitle(t *testing.T) {
+	t.Parallel()
+
+	server, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("expected miniredis to start, got error: %v", err)
+	}
+	defer server.Close()
+
+	store, err := NewRedisStore(RedisConfig{
+		Addr:      server.Addr(),
+		KeyPrefix: "subtitle-delivery-test",
+		TTL:       time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("expected redis store to initialize, got error: %v", err)
+	}
+
+	first := domain.Subtitle{
+		ID:        "subtitle-1",
+		Content:   "WEBVTT\n\nfirst\n",
+		CreatedAt: time.Now().UTC(),
+	}
+	second := domain.Subtitle{
+		ID:        "subtitle-2",
+		Content:   "WEBVTT\n\nsecond\n",
+		CreatedAt: time.Now().UTC(),
+	}
+
+	if err := store.Save(context.Background(), first); err != nil {
+		t.Fatalf("expected first save to succeed, got error: %v", err)
+	}
+	if err := store.Save(context.Background(), second); err != nil {
+		t.Fatalf("expected second save to succeed, got error: %v", err)
+	}
+
+	latest, err := store.Latest(context.Background())
+	if err != nil {
+		t.Fatalf("expected latest to succeed, got error: %v", err)
+	}
+	if latest.ID != "subtitle-2" {
+		t.Fatalf("expected latest to be subtitle-2, got %q", latest.ID)
+	}
+
+	oldKey := store.subtitleKey("subtitle-1")
+	if server.Exists(oldKey) {
+		t.Fatal("expected previous subtitle key to be deleted after new save")
+	}
+}
+
 func TestRedisStoreLatestReturnsErrorWhenBackendBecomesUnavailable(t *testing.T) {
 	t.Parallel()
 

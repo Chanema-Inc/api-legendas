@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,8 +34,8 @@ func TestCreateSubtitleStoresNormalizedSubtitle(t *testing.T) {
 	if store.saved.SourceURL != "https://example.com/subtitle.srt" {
 		t.Fatalf("expected source URL to be stored, got %q", store.saved.SourceURL)
 	}
-	if store.saved.Content != "" {
-		t.Fatalf("expected content not to be persisted in this flow, got %q", store.saved.Content)
+	if store.saved.Content == "" {
+		t.Fatal("expected subtitle content to be persisted in cache")
 	}
 }
 
@@ -78,6 +80,29 @@ func TestLatestSubtitleDelegatesToStore(t *testing.T) {
 	}
 }
 
+func TestCreateSubtitleSerializesConcurrentFetchesForSameSource(t *testing.T) {
+	t.Parallel()
+
+	store := &stubStore{}
+	fetcher := &concurrencyTrackingFetcher{body: []byte("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n")}
+	subtitleService := NewSubtitleService(300*1024, 10*time.Minute, store, fetcher)
+
+	const workers = 50
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = subtitleService.CreateSubtitle(context.Background(), "https://example.com/subtitle.vtt")
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&fetcher.maxConcurrent); got > 1 {
+		t.Fatalf("expected fetch max concurrency <= 1, got %d", got)
+	}
+}
+
 type stubStore struct {
 	saved     domain.Subtitle
 	latest    domain.Subtitle
@@ -106,5 +131,28 @@ func (fetcher stubFetcher) Fetch(_ context.Context, _ string, _ int64) ([]byte, 
 	if fetcher.err != nil {
 		return nil, fetcher.err
 	}
+	return fetcher.body, nil
+}
+
+type concurrencyTrackingFetcher struct {
+	body          []byte
+	maxConcurrent int32
+	current       int32
+}
+
+func (fetcher *concurrencyTrackingFetcher) Fetch(_ context.Context, _ string, _ int64) ([]byte, error) {
+	current := atomic.AddInt32(&fetcher.current, 1)
+	for {
+		max := atomic.LoadInt32(&fetcher.maxConcurrent)
+		if current <= max {
+			break
+		}
+		if atomic.CompareAndSwapInt32(&fetcher.maxConcurrent, max, current) {
+			break
+		}
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	atomic.AddInt32(&fetcher.current, -1)
 	return fetcher.body, nil
 }
