@@ -64,12 +64,9 @@ func (controller *HTTPController) HandleGetLatestSubtitle(response http.Response
 		return
 	}
 
-	response.Header().Set("Content-Type", "application/json")
+	response.Header().Set("Content-Type", "text/vtt")
 	response.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(response).Encode(map[string]string{
-		"id":  record.ID,
-		"url": record.SourceURL,
-	})
+	_, _ = response.Write([]byte(record.Content))
 }
 
 func mapErrorToStatus(err error) int {

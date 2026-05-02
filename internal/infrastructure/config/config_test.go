@@ -8,12 +8,12 @@ import (
 
 func TestLoadUsesEnvironmentVariablesBeforeDevDefaults(t *testing.T) {
 	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "APP_PORT=8080\nMAX_SUBTITLE_SIZE_BYTES=307200\nALLOWED_ORIGINS=http://client.local\nPROBE_ALLOWED_IPS=127.0.0.1\nHEALTH_PROTECTION_ENABLED=true\nCACHE_TTL=10m\nRATE_LIMIT_BURST=20\nRATE_LIMIT_WINDOW=1m\n")
-	writeFile(t, filepath.Join(rootDir, ".env.prod"), "APP_PORT=\nMAX_SUBTITLE_SIZE_BYTES=\nALLOWED_ORIGINS=\nPROBE_ALLOWED_IPS=\nHEALTH_PROTECTION_ENABLED=\nCACHE_TTL=\nRATE_LIMIT_BURST=\nRATE_LIMIT_WINDOW=\n")
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "APP_PORT=8080\nMAX_SUBTITLE_SIZE_BYTES=307200\nALLOWED_ORIGINS_LEGENDA_POST=https://subtitle-api.fly.dev\nALLOWED_ORIGINS_HEALTH_GET=https://service.onrender.com\nCACHE_TTL=5h\nRATE_LIMIT_BURST=20\nRATE_LIMIT_WINDOW=1m\n")
+	writeFile(t, filepath.Join(rootDir, ".env.prod"), "")
 
 	t.Setenv("APP_PORT", "9090")
 	t.Setenv("MAX_SUBTITLE_SIZE_BYTES", "1024")
-	t.Setenv("ALLOWED_ORIGINS", "http://override.local")
+	t.Setenv("ALLOWED_ORIGINS_LEGENDA_POST", "https://override.fly.dev")
 	t.Setenv("APP_ENV", "development")
 
 	config, err := Load(rootDir)
@@ -29,27 +29,21 @@ func TestLoadUsesEnvironmentVariablesBeforeDevDefaults(t *testing.T) {
 		t.Fatalf("expected env size override, got %d", config.MaxSubtitleSizeBytes)
 	}
 
-	if _, ok := config.AllowedOrigins["http://override.local"]; !ok {
-		t.Fatal("expected overridden allowed origin to be loaded")
+	if origins := config.AllowedOriginsByRouteAndMethod["/legenda"]["GET"]; len(origins) != 0 {
+		t.Fatal("expected legenda GET to have no allowlist (open)")
 	}
-	if _, ok := config.AllowedOriginsByMethod["POST"]["http://override.local"]; !ok {
-		t.Fatal("expected overridden allowed origin to be loaded for POST")
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["POST"]["https://override.fly.dev"]; !ok {
+		t.Fatal("expected legenda POST origin override from environment")
 	}
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["POST"]["http://override.local"]; !ok {
-		t.Fatal("expected overridden allowed origin to be loaded for POST /legenda")
-	}
-	if _, ok := config.AllowedProbeIPs["127.0.0.1"]; !ok {
-		t.Fatal("expected probe allowed ip to be loaded")
-	}
-	if !config.HealthProtectionEnabled {
-		t.Fatal("expected health protection to be enabled")
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/health"]["GET"]["https://service.onrender.com"]; !ok {
+		t.Fatal("expected health GET origin from env file")
 	}
 }
 
 func TestLoadFallsBackToDevValuesInProductionWhenEnvVarIsMissing(t *testing.T) {
 	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "APP_PORT=8080\nMAX_SUBTITLE_SIZE_BYTES=307200\nALLOWED_ORIGINS=http://client.local,http://admin.local\nPROBE_ALLOWED_IPS=127.0.0.1,::1\nHEALTH_PROTECTION_ENABLED=true\nCACHE_TTL=15m\nRATE_LIMIT_BURST=30\nRATE_LIMIT_WINDOW=1m\n")
-	writeFile(t, filepath.Join(rootDir, ".env.prod"), "APP_PORT=\nMAX_SUBTITLE_SIZE_BYTES=\nALLOWED_ORIGINS=\nPROBE_ALLOWED_IPS=\nHEALTH_PROTECTION_ENABLED=\nCACHE_TTL=\nRATE_LIMIT_BURST=\nRATE_LIMIT_WINDOW=\n")
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "APP_PORT=8080\nMAX_SUBTITLE_SIZE_BYTES=307200\nALLOWED_ORIGINS_LEGENDA_POST=https://subtitle-api.fly.dev\nALLOWED_ORIGINS_HEALTH_GET=https://service.onrender.com\nCACHE_TTL=5h\nRATE_LIMIT_BURST=30\nRATE_LIMIT_WINDOW=1m\n")
+	writeFile(t, filepath.Join(rootDir, ".env.prod"), "APP_PORT=\nMAX_SUBTITLE_SIZE_BYTES=\nALLOWED_ORIGINS_LEGENDA_POST=\nALLOWED_ORIGINS_HEALTH_GET=\nCACHE_TTL=\nRATE_LIMIT_BURST=\nRATE_LIMIT_WINDOW=\n")
 
 	t.Setenv("APP_ENV", "production")
 
@@ -66,100 +60,52 @@ func TestLoadFallsBackToDevValuesInProductionWhenEnvVarIsMissing(t *testing.T) {
 		t.Fatalf("expected dev fallback size, got %d", config.MaxSubtitleSizeBytes)
 	}
 
-	if _, ok := config.AllowedOrigins["http://admin.local"]; !ok {
-		t.Fatal("expected fallback allowed origins to be loaded")
+	if origins := config.AllowedOriginsByRouteAndMethod["/legenda"]["GET"]; len(origins) != 0 {
+		t.Fatal("expected legenda GET to have no allowlist (open)")
 	}
-	if _, ok := config.AllowedOriginsByMethod["GET"]["http://admin.local"]; !ok {
-		t.Fatal("expected fallback allowed origins to be loaded for GET")
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["POST"]["https://subtitle-api.fly.dev"]; !ok {
+		t.Fatal("expected /legenda POST origin fallback to dev file")
 	}
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["GET"]["http://admin.local"]; !ok {
-		t.Fatal("expected fallback allowed origins to be loaded for GET /legenda")
+	if _, ok := config.AllowedOriginsByRouteAndMethod["/health"]["GET"]["https://service.onrender.com"]; !ok {
+		t.Fatal("expected /health GET origin fallback to dev file")
 	}
-	if !config.HealthProtectionEnabled {
-		t.Fatal("expected health protection fallback to be enabled")
-	}
-
 }
 
-func TestLoadReadsHealthProtectionEnabledFromEnv(t *testing.T) {
+func TestLoadUsesFiveHoursAsDefaultCacheTTL(t *testing.T) {
 	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "HEALTH_PROTECTION_ENABLED=true\n")
-	writeFile(t, filepath.Join(rootDir, ".env.prod"), "HEALTH_PROTECTION_ENABLED=\n")
-
-	t.Setenv("HEALTH_PROTECTION_ENABLED", "false")
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "")
+	writeFile(t, filepath.Join(rootDir, ".env.prod"), "")
 
 	config, err := Load(rootDir)
 	if err != nil {
 		t.Fatalf("expected config to load successfully, got error: %v", err)
 	}
 
-	if config.HealthProtectionEnabled {
-		t.Fatal("expected health protection to be disabled by env override")
+	if config.CacheTTL.Hours() != 5 {
+		t.Fatalf("expected default cache ttl to be 5h, got %s", config.CacheTTL)
 	}
 }
 
-func TestLoadSupportsMethodSpecificAllowedOrigins(t *testing.T) {
+func TestLoadBuildsOptionsAllowlistFromRouteMethods(t *testing.T) {
 	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "ALLOWED_ORIGINS=http://default.local\nALLOWED_ORIGINS_GET=https://watch.local\nALLOWED_ORIGINS_POST=https://bot.local\n")
-	writeFile(t, filepath.Join(rootDir, ".env.prod"), "ALLOWED_ORIGINS=\nALLOWED_ORIGINS_GET=\nALLOWED_ORIGINS_POST=\n")
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "ALLOWED_ORIGINS_LEGENDA_POST=https://subtitle-api.fly.dev\n")
+	writeFile(t, filepath.Join(rootDir, ".env.prod"), "")
 
 	config, err := Load(rootDir)
 	if err != nil {
 		t.Fatalf("expected config to load successfully, got error: %v", err)
 	}
 
-	if _, ok := config.AllowedOriginsByMethod["GET"]["https://watch.local"]; !ok {
-		t.Fatal("expected GET origin to use method-specific allowlist")
-	}
-
-	if _, ok := config.AllowedOriginsByMethod["POST"]["https://bot.local"]; !ok {
-		t.Fatal("expected POST origin to use method-specific allowlist")
-	}
-
-	if _, ok := config.AllowedOriginsByMethod["POST"]["http://default.local"]; ok {
-		t.Fatal("expected POST origin list to not include default when method-specific list is provided")
-	}
-
-	if _, ok := config.AllowedOriginsByMethod["OPTIONS"]["http://default.local"]; !ok {
-		t.Fatal("expected OPTIONS origin list to fallback to default allowlist")
-	}
-}
-
-func TestLoadSupportsRouteAndMethodSpecificAllowedOrigins(t *testing.T) {
-	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "ALLOWED_ORIGINS=http://default.local\nALLOWED_ORIGINS_LEGENDA_GET=https://cytube.local\nALLOWED_ORIGINS_LEGENDA_POST=https://bot.local\n")
-	writeFile(t, filepath.Join(rootDir, ".env.prod"), "ALLOWED_ORIGINS=\nALLOWED_ORIGINS_LEGENDA_GET=\nALLOWED_ORIGINS_LEGENDA_POST=\n")
-
-	config, err := Load(rootDir)
-	if err != nil {
-		t.Fatalf("expected config to load successfully, got error: %v", err)
-	}
-
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["GET"]["https://cytube.local"]; !ok {
-		t.Fatal("expected route-specific GET origin for /legenda")
-	}
-
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["POST"]["https://bot.local"]; !ok {
-		t.Fatal("expected route-specific POST origin for /legenda")
-	}
-
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["POST"]["http://default.local"]; ok {
-		t.Fatal("expected route-specific POST list to not include global default when overridden")
-	}
-
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["OPTIONS"]["http://default.local"]; !ok {
-		t.Fatal("expected OPTIONS for /legenda to fallback to global default")
-	}
-
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/health"]["GET"]["http://default.local"]; !ok {
-		t.Fatal("expected GET for /health to fallback to global default")
+	optionsOrigins := config.AllowedOriginsByRouteAndMethod["/legenda"]["OPTIONS"]
+	if _, ok := optionsOrigins["https://subtitle-api.fly.dev"]; !ok {
+		t.Fatal("expected /legenda OPTIONS to include POST origin")
 	}
 }
 
 func TestLoadSupportsRedisBackendSettings(t *testing.T) {
 	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "STORAGE_BACKEND=memory_cache\nREDIS_ADDR=localhost:6379\nREDIS_DB=0\nREDIS_KEY_PREFIX=subtitle-delivery\nCACHE_TTL=10m\n")
-	writeFile(t, filepath.Join(rootDir, ".env.prod"), "STORAGE_BACKEND=redis\nREDIS_ADDR=redis.internal:6379\nREDIS_PASSWORD=secret\nREDIS_DB=4\nREDIS_KEY_PREFIX=subtitle-prod\nCACHE_TTL=30m\n")
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "STORAGE_BACKEND=memory_cache\nREDIS_ADDR=localhost:6379\nREDIS_DB=0\nREDIS_KEY_PREFIX=subtitle-delivery\nCACHE_TTL=5h\n")
+	writeFile(t, filepath.Join(rootDir, ".env.prod"), "STORAGE_BACKEND=redis\nREDIS_ADDR=redis.internal:6379\nREDIS_PASSWORD=secret\nREDIS_DB=4\nREDIS_KEY_PREFIX=subtitle-prod\nCACHE_TTL=6h\n")
 
 	t.Setenv("APP_ENV", "production")
 
@@ -188,14 +134,14 @@ func TestLoadSupportsRedisBackendSettings(t *testing.T) {
 		t.Fatalf("expected redis key prefix to be loaded, got %q", config.RedisKeyPrefix)
 	}
 
-	if config.CacheTTL.Minutes() != 30 {
-		t.Fatalf("expected cache ttl to be loaded, got %s", config.CacheTTL)
+	if config.CacheTTL.Hours() != 6 {
+		t.Fatalf("expected cache ttl to be loaded from production file, got %s", config.CacheTTL)
 	}
 }
 
 func TestLoadSupportsUpstashRedisURL(t *testing.T) {
 	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "STORAGE_BACKEND=redis\nUPSTASH_REDIS_URL=rediss://default:secret@global-hero-12345.upstash.io:6379\nCACHE_TTL=10m\n")
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "STORAGE_BACKEND=redis\nUPSTASH_REDIS_URL=rediss://default:secret@global-hero-12345.upstash.io:6379\nCACHE_TTL=5h\n")
 	writeFile(t, filepath.Join(rootDir, ".env.prod"), "STORAGE_BACKEND=\nUPSTASH_REDIS_URL=\nCACHE_TTL=\n")
 
 	config, err := Load(rootDir)
