@@ -8,12 +8,13 @@ import (
 
 func TestLoadUsesEnvironmentVariablesBeforeDevDefaults(t *testing.T) {
 	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "APP_PORT=8080\nMAX_SUBTITLE_SIZE_BYTES=307200\nALLOWED_ORIGINS_LEGENDA_POST=https://subtitle-api.fly.dev\nALLOWED_ORIGINS_HEALTH_GET=https://service.onrender.com\nCACHE_TTL=5h\nRATE_LIMIT_BURST=20\nRATE_LIMIT_WINDOW=1m\n")
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "APP_PORT=8080\nMAX_SUBTITLE_SIZE_BYTES=307200\nALLOWED_ORIGINS_LEGENDA_POST=https://subtitle-api.fly.dev\nALLOWED_ORIGINS_HEALTH_GET=https://service.onrender.com\nCACHE_TTL=5h\nRATE_LIMIT_BURST=20\nRATE_LIMIT_WINDOW=1m\nJWT_SECRET=dev-secret\n")
 	writeFile(t, filepath.Join(rootDir, ".env.prod"), "")
 
 	t.Setenv("APP_PORT", "9090")
 	t.Setenv("MAX_SUBTITLE_SIZE_BYTES", "1024")
 	t.Setenv("ALLOWED_ORIGINS_LEGENDA_POST", "https://override.fly.dev")
+	t.Setenv("JWT_SECRET", "env-secret")
 	t.Setenv("APP_ENV", "development")
 
 	config, err := Load(rootDir)
@@ -27,6 +28,10 @@ func TestLoadUsesEnvironmentVariablesBeforeDevDefaults(t *testing.T) {
 
 	if config.MaxSubtitleSizeBytes != 1024 {
 		t.Fatalf("expected env size override, got %d", config.MaxSubtitleSizeBytes)
+	}
+
+	if config.JWTSecret != "env-secret" {
+		t.Fatalf("expected env JWT secret override, got %q", config.JWTSecret)
 	}
 
 	if origins := config.AllowedOriginsByRouteAndMethod["/legenda"]["GET"]; len(origins) != 0 {

@@ -3,9 +3,12 @@ package httpapi
 import (
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func WithCORS(allowedOriginsByRouteAndMethod map[string]map[string]map[string]struct{}, next http.Handler) http.Handler {
@@ -79,6 +82,62 @@ func WithRateLimit(limiter *RateLimiter, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(response, request)
 	})
+}
+
+func WithJWTAuth(secret string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if !requiresJWT(request) {
+			next.ServeHTTP(response, request)
+			return
+		}
+
+		token, err := extractBearerToken(request.Header.Get("Authorization"))
+		if err != nil {
+			writeJSONError(response, http.StatusUnauthorized, err.Error())
+			return
+		}
+
+		if strings.TrimSpace(secret) == "" {
+			writeJSONError(response, http.StatusInternalServerError, "jwt secret not configured")
+			return
+		}
+
+		parsedToken, err := jwt.Parse(token, func(parsedToken *jwt.Token) (any, error) {
+			if _, ok := parsedToken.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("unexpected signing method")
+			}
+			return []byte(secret), nil
+		}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg(), jwt.SigningMethodHS384.Alg(), jwt.SigningMethodHS512.Alg()}))
+		if err != nil || !parsedToken.Valid {
+			writeJSONError(response, http.StatusUnauthorized, "invalid authorization token")
+			return
+		}
+
+		next.ServeHTTP(response, request)
+	})
+}
+
+func requiresJWT(request *http.Request) bool {
+	return request.URL.Path == "/legenda" && request.Method == http.MethodPost
+}
+
+func extractBearerToken(headerValue string) (string, error) {
+	headerValue = strings.TrimSpace(headerValue)
+	if headerValue == "" {
+		return "", errors.New("missing authorization header")
+	}
+
+	parts := strings.SplitN(headerValue, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", errors.New("invalid authorization header format")
+	}
+
+	token := strings.TrimSpace(parts[1])
+	if token == "" {
+		return "", errors.New("invalid authorization header format")
+	}
+
+	return token, nil
 }
 
 func isProbePath(path string) bool {

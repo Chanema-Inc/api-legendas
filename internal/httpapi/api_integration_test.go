@@ -12,11 +12,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	controller "subtitle-delivery/internal/controller"
 	httpapi "subtitle-delivery/internal/httpapi"
 	infrastructure "subtitle-delivery/internal/infrastructure"
 	service "subtitle-delivery/internal/service"
 )
+
+const testJWTSecret = "test-secret"
 
 type stubFetcher struct {
 	body []byte
@@ -50,7 +54,7 @@ func newServer(maxFileSize int64, ttl time.Duration, fetcher service.Fetcher, li
 			http.MethodGet:     allowedOrigins,
 			http.MethodOptions: allowedOrigins,
 		},
-	}, httpapi.WithGzip(httpapi.WithRateLimit(limiter, mux)))
+	}, httpapi.WithGzip(httpapi.WithRateLimit(limiter, httpapi.WithJWTAuth(testJWTSecret, mux))))
 }
 
 func newDefaultTestServer(t *testing.T) http.Handler {
@@ -70,6 +74,7 @@ func createSubtitle(t *testing.T, server http.Handler, subtitleURL string) {
 	body := bytes.NewBufferString(`{"url":"` + subtitleURL + `"}`)
 	request := httptest.NewRequest(http.MethodPost, "/legenda", body)
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -79,6 +84,22 @@ func createSubtitle(t *testing.T, server http.Handler, subtitleURL string) {
 	}
 }
 
+func makeTestJWTToken(t *testing.T, secret string) string {
+	t.Helper()
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "integration-test",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+
+	signed, err := token.SignedString([]byte(secret))
+	if err != nil {
+		t.Fatalf("failed to sign test JWT: %v", err)
+	}
+
+	return signed
+}
+
 func TestPostLegendaStoresSubtitleAndReturnsLocation(t *testing.T) {
 	t.Parallel()
 	server := newDefaultTestServer(t)
@@ -86,6 +107,7 @@ func TestPostLegendaStoresSubtitleAndReturnsLocation(t *testing.T) {
 	body := bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`)
 	request := httptest.NewRequest(http.MethodPost, "/legenda", body)
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -143,6 +165,7 @@ func TestPostLegendaRejectsUnsupportedSubtitleExtension(t *testing.T) {
 	body := bytes.NewBufferString(`{"url":"https://example.com/file.txt"}`)
 	request := httptest.NewRequest(http.MethodPost, "/legenda", body)
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -159,6 +182,7 @@ func TestPostLegendaRejectsMaliciousSubtitleContent(t *testing.T) {
 	body := bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`)
 	request := httptest.NewRequest(http.MethodPost, "/legenda", body)
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -185,12 +209,28 @@ func TestPostLegendaAcceptsSRTAndKeepsSourceURL(t *testing.T) {
 	}
 }
 
+func TestPostLegendaAcceptsWEBVTTURLAndContent(t *testing.T) {
+	t.Parallel()
+	server := newServer(300*1024, 10*time.Minute, stubFetcher{body: []byte("WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nHello webvtt\n")}, httpapi.NewRateLimiter(60, time.Minute), map[string]struct{}{"http://client.local": {}})
+
+	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.webvtt"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, recorder.Code)
+	}
+}
+
 func TestPostLegendaRejectsEmptyFetchedContent(t *testing.T) {
 	t.Parallel()
 	server := newServer(300*1024, 10*time.Minute, stubFetcher{body: []byte("   ")}, httpapi.NewRateLimiter(60, time.Minute), map[string]struct{}{"http://client.local": {}})
 
 	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.srt"}`))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 
@@ -267,6 +307,7 @@ func TestRateLimiterBlocksRequestsAfterBurst(t *testing.T) {
 	for attempt := 0; attempt < 2; attempt++ {
 		request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
 		recorder := httptest.NewRecorder()
 		server.ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusCreated {
@@ -276,6 +317,7 @@ func TestRateLimiterBlocksRequestsAfterBurst(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 
@@ -381,6 +423,7 @@ func TestPostLegendaRejectsFilesLargerThanConfiguredLimit(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 
@@ -402,6 +445,7 @@ func TestCreateWithFailingFetcherReturnsBadGateway(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 
@@ -436,6 +480,7 @@ func TestCreatesStableResponseShape(t *testing.T) {
 	server := newDefaultTestServer(t)
 	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+makeTestJWTToken(t, testJWTSecret))
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 
@@ -452,5 +497,34 @@ func TestCreatesStableResponseShape(t *testing.T) {
 	}
 	if _, ok := response["url"]; !ok {
 		t.Fatal("expected response to include url")
+	}
+}
+
+func TestPostLegendaRejectsMissingAuthorizationHeader(t *testing.T) {
+	t.Parallel()
+
+	server := newDefaultTestServer(t)
+	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, recorder.Code)
+	}
+}
+
+func TestPostLegendaRejectsInvalidAuthorizationToken(t *testing.T) {
+	t.Parallel()
+
+	server := newDefaultTestServer(t)
+	request := httptest.NewRequest(http.MethodPost, "/legenda", bytes.NewBufferString(`{"url":"https://example.com/movie.vtt"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer invalid-token")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, recorder.Code)
 	}
 }

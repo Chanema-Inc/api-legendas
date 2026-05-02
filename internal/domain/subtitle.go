@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -20,11 +21,14 @@ type Subtitle struct {
 }
 
 var (
-	ErrInvalidURL        = errors.New("invalid subtitle URL")
-	ErrUnsupportedFormat = errors.New("subtitle URL must point to .srt, .vtt or .webvtt content")
-	ErrMaliciousContent  = errors.New("subtitle contains potentially malicious content")
-	ErrEmptyContent      = errors.New("empty subtitle content")
+	ErrInvalidURL           = errors.New("invalid subtitle URL")
+	ErrUnsupportedFormat    = errors.New("subtitle URL must point to .srt, .vtt or .webvtt content")
+	ErrInvalidContentFormat = errors.New("subtitle content must be valid .srt, .vtt or .webvtt")
+	ErrMaliciousContent     = errors.New("subtitle contains potentially malicious content")
+	ErrEmptyContent         = errors.New("empty subtitle content")
 )
+
+var cueTimingLinePattern = regexp.MustCompile(`(?m)^\s*\d{2}:\d{2}:\d{2}(?:[\.,]\d{1,3})?\s+-->\s+\d{2}:\d{2}:\d{2}(?:[\.,]\d{1,3})?`)
 
 func ValidateSubtitleURL(rawURL string) error {
 	parsedURL, err := url.Parse(rawURL)
@@ -50,7 +54,22 @@ func ValidateSubtitleContent(body []byte) error {
 	if LooksMalicious(content) {
 		return ErrMaliciousContent
 	}
+	if !isSupportedSubtitleContent(content) {
+		return ErrInvalidContentFormat
+	}
 	return nil
+}
+
+func isSupportedSubtitleContent(content string) bool {
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	trimmed := strings.TrimSpace(normalized)
+
+	if strings.HasPrefix(trimmed, "WEBVTT") {
+		return cueTimingLinePattern.MatchString(trimmed)
+	}
+
+	return cueTimingLinePattern.MatchString(trimmed)
 }
 
 func LooksMalicious(content string) bool {

@@ -13,6 +13,7 @@ import (
 type RuntimeConfig struct {
 	Environment                    string
 	Port                           string
+	JWTSecret                      string
 	Storage                        string
 	UpstashRedisURL                string
 	RedisAddr                      string
@@ -82,6 +83,7 @@ func Load(rootDir string) (RuntimeConfig, error) {
 	return RuntimeConfig{
 		Environment:                    environment,
 		Port:                           port,
+		JWTSecret:                      resolveSetting("JWT_SECRET", selectedValues),
 		Storage:                        firstNonEmpty(resolveSetting("STORAGE_BACKEND", selectedValues), "memory_cache"),
 		UpstashRedisURL:                resolveSetting("UPSTASH_REDIS_URL", selectedValues),
 		RedisAddr:                      resolveSetting("REDIS_ADDR", selectedValues),

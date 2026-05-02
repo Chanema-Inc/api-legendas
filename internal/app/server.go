@@ -12,6 +12,7 @@ import (
 
 type Server struct {
 	baseURL                        string
+	jwtSecret                      string
 	maxFileSize                    int64
 	defaultTTL                     time.Duration
 	store                          service.Store
@@ -25,6 +26,7 @@ type Server struct {
 
 type Config struct {
 	BaseURL                        string
+	JWTSecret                      string
 	MaxFileSize                    int64
 	DefaultTTL                     time.Duration
 	Store                          service.Store
@@ -36,6 +38,7 @@ type Config struct {
 func NewServer(config Config) *Server {
 	server := &Server{
 		baseURL:                        config.BaseURL,
+		jwtSecret:                      config.JWTSecret,
 		maxFileSize:                    config.MaxFileSize,
 		defaultTTL:                     config.DefaultTTL,
 		store:                          config.Store,
@@ -56,7 +59,7 @@ func (server *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	httpapi.RegisterRoutes(mux, server.subtitleController)
 	server.handler = httpapi.WithCORS(server.allowedOriginsByRouteAndMethod,
-		httpapi.WithGzip(httpapi.WithRateLimit(server.rateLimiter, mux)))
+		httpapi.WithGzip(httpapi.WithRateLimit(server.rateLimiter, httpapi.WithJWTAuth(server.jwtSecret, mux))))
 
 	return server.handler
 }
