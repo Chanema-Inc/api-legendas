@@ -21,6 +21,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if appConfig.JWTSecret == "" {
+		log.Fatal("JWT_SECRET must be configured")
+	}
 
 	store, err := app.NewStorage(appConfig)
 	if err != nil {
@@ -55,6 +58,7 @@ func main() {
 
 	server := app.NewServer(app.Config{
 		BaseURL:                        "http://localhost:" + appConfig.Port,
+		JWTSecret:                      appConfig.JWTSecret,
 		MaxFileSize:                    appConfig.MaxSubtitleSizeBytes,
 		DefaultTTL:                     appConfig.CacheTTL,
 		Store:                          store,

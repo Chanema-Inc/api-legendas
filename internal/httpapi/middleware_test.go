@@ -7,7 +7,25 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
+
+func makeJWTForTest(t *testing.T, secret string) string {
+	t.Helper()
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "middleware-test",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+
+	signed, err := token.SignedString([]byte(secret))
+	if err != nil {
+		t.Fatalf("expected token to be signed, got error: %v", err)
+	}
+
+	return signed
+}
 
 func TestWithCORSAllowsConfiguredOrigin(t *testing.T) {
 	t.Parallel()
@@ -221,5 +239,58 @@ func TestWithRateLimitBypassesProbeEndpoints(t *testing.T) {
 
 	if secondRecorder.Code != http.StatusOK {
 		t.Fatalf("expected status %d for /health, got %d", http.StatusOK, secondRecorder.Code)
+	}
+}
+
+func TestWithJWTAuthRejectsMissingAuthorizationForProtectedRoute(t *testing.T) {
+	t.Parallel()
+
+	handler := WithJWTAuth("secret", http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusOK)
+	}))
+
+	request := httptest.NewRequest(http.MethodPost, "/legenda", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, recorder.Code)
+	}
+}
+
+func TestWithJWTAuthAllowsValidTokenForProtectedRoute(t *testing.T) {
+	t.Parallel()
+
+	secret := "secret"
+	handler := WithJWTAuth(secret, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusAccepted)
+	}))
+
+	request := httptest.NewRequest(http.MethodPost, "/legenda", nil)
+	request.Header.Set("Authorization", "Bearer "+makeJWTForTest(t, secret))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d", http.StatusAccepted, recorder.Code)
+	}
+}
+
+func TestWithJWTAuthSkipsAuthenticationForGetLegenda(t *testing.T) {
+	t.Parallel()
+
+	handler := WithJWTAuth("secret", http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusOK)
+	}))
+
+	request := httptest.NewRequest(http.MethodGet, "/legenda", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
 	}
 }

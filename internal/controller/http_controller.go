@@ -71,7 +71,7 @@ func (controller *HTTPController) HandleGetLatestSubtitle(response http.Response
 
 func mapErrorToStatus(err error) int {
 	switch {
-	case errors.Is(err, domain.ErrInvalidURL), errors.Is(err, domain.ErrUnsupportedFormat), errors.Is(err, domain.ErrMaliciousContent), errors.Is(err, domain.ErrEmptyContent):
+	case errors.Is(err, domain.ErrInvalidURL), errors.Is(err, domain.ErrUnsupportedFormat), errors.Is(err, domain.ErrInvalidContentFormat), errors.Is(err, domain.ErrMaliciousContent), errors.Is(err, domain.ErrEmptyContent):
 		return http.StatusBadRequest
 	case errors.Is(err, service.ErrSubtitleTooLarge):
 		return http.StatusRequestEntityTooLarge
@@ -82,7 +82,7 @@ func mapErrorToStatus(err error) int {
 
 func mapErrorToMessage(err error) string {
 	switch {
-	case errors.Is(err, domain.ErrInvalidURL), errors.Is(err, domain.ErrUnsupportedFormat), errors.Is(err, domain.ErrMaliciousContent), errors.Is(err, domain.ErrEmptyContent), errors.Is(err, service.ErrSubtitleTooLarge):
+	case errors.Is(err, domain.ErrInvalidURL), errors.Is(err, domain.ErrUnsupportedFormat), errors.Is(err, domain.ErrInvalidContentFormat), errors.Is(err, domain.ErrMaliciousContent), errors.Is(err, domain.ErrEmptyContent), errors.Is(err, service.ErrSubtitleTooLarge):
 		return err.Error()
 	default:
 		return "falha ao buscar legenda"

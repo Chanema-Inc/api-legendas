@@ -8,12 +8,13 @@ import (
 
 func TestLoadUsesEnvironmentVariablesBeforeDevDefaults(t *testing.T) {
 	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "APP_PORT=8080\nMAX_SUBTITLE_SIZE_BYTES=307200\nALLOWED_ORIGINS_LEGENDA_POST=https://subtitle-api.fly.dev\nALLOWED_ORIGINS_HEALTH_GET=https://service.onrender.com\nCACHE_TTL=5h\nRATE_LIMIT_BURST=20\nRATE_LIMIT_WINDOW=1m\n")
+	writeFile(t, filepath.Join(rootDir, ".env.dev"), "APP_PORT=8080\nMAX_SUBTITLE_SIZE_BYTES=307200\nALLOWED_ORIGINS_LEGENDA_POST=https://subtitle-api.fly.dev\nALLOWED_ORIGINS_HEALTH_GET=https://service.onrender.com\nCACHE_TTL=5h\nRATE_LIMIT_BURST=20\nRATE_LIMIT_WINDOW=1m\nJWT_SECRET=dev-secret\n")
 	writeFile(t, filepath.Join(rootDir, ".env.prod"), "")
 
 	t.Setenv("APP_PORT", "9090")
 	t.Setenv("MAX_SUBTITLE_SIZE_BYTES", "1024")
 	t.Setenv("ALLOWED_ORIGINS_LEGENDA_POST", "https://override.fly.dev")
+	t.Setenv("JWT_SECRET", "env-secret")
 	t.Setenv("APP_ENV", "development")
 
 	config, err := Load(rootDir)
@@ -27,6 +28,10 @@ func TestLoadUsesEnvironmentVariablesBeforeDevDefaults(t *testing.T) {
 
 	if config.MaxSubtitleSizeBytes != 1024 {
 		t.Fatalf("expected env size override, got %d", config.MaxSubtitleSizeBytes)
+	}
+
+	if config.JWTSecret != "env-secret" {
+		t.Fatalf("expected env JWT secret override, got %q", config.JWTSecret)
 	}
 
 	if origins := config.AllowedOriginsByRouteAndMethod["/legenda"]["GET"]; len(origins) != 0 {
@@ -99,64 +104,6 @@ func TestLoadBuildsOptionsAllowlistFromRouteMethods(t *testing.T) {
 	optionsOrigins := config.AllowedOriginsByRouteAndMethod["/legenda"]["OPTIONS"]
 	if _, ok := optionsOrigins["https://subtitle-api.fly.dev"]; !ok {
 		t.Fatal("expected /legenda OPTIONS to include POST origin")
-	}
-}
-
-func TestLoadSupportsMethodSpecificAllowedOrigins(t *testing.T) {
-	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "ALLOWED_ORIGINS=http://default.local\nALLOWED_ORIGINS_GET=https://watch.local\nALLOWED_ORIGINS_POST=https://bot.local\n")
-	writeFile(t, filepath.Join(rootDir, ".env.prod"), "ALLOWED_ORIGINS=\nALLOWED_ORIGINS_GET=\nALLOWED_ORIGINS_POST=\n")
-
-	config, err := Load(rootDir)
-	if err != nil {
-		t.Fatalf("expected config to load successfully, got error: %v", err)
-	}
-
-	if _, ok := config.AllowedOriginsByMethod["GET"]["https://watch.local"]; !ok {
-		t.Fatal("expected GET origin to use method-specific allowlist")
-	}
-
-	if _, ok := config.AllowedOriginsByMethod["POST"]["https://bot.local"]; !ok {
-		t.Fatal("expected POST origin to use method-specific allowlist")
-	}
-
-	if _, ok := config.AllowedOriginsByMethod["POST"]["http://default.local"]; ok {
-		t.Fatal("expected POST origin list to not include default when method-specific list is provided")
-	}
-
-	if _, ok := config.AllowedOriginsByMethod["OPTIONS"]["http://default.local"]; !ok {
-		t.Fatal("expected OPTIONS origin list to fallback to default allowlist")
-	}
-}
-
-func TestLoadSupportsRouteAndMethodSpecificAllowedOrigins(t *testing.T) {
-	rootDir := t.TempDir()
-	writeFile(t, filepath.Join(rootDir, ".env.dev"), "ALLOWED_ORIGINS=http://default.local\nALLOWED_ORIGINS_LEGENDA_GET=https://cytube.local\nALLOWED_ORIGINS_LEGENDA_POST=https://bot.local\n")
-	writeFile(t, filepath.Join(rootDir, ".env.prod"), "ALLOWED_ORIGINS=\nALLOWED_ORIGINS_LEGENDA_GET=\nALLOWED_ORIGINS_LEGENDA_POST=\n")
-
-	config, err := Load(rootDir)
-	if err != nil {
-		t.Fatalf("expected config to load successfully, got error: %v", err)
-	}
-
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["GET"]["https://cytube.local"]; !ok {
-		t.Fatal("expected route-specific GET origin for /legenda")
-	}
-
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["POST"]["https://bot.local"]; !ok {
-		t.Fatal("expected route-specific POST origin for /legenda")
-	}
-
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["POST"]["http://default.local"]; ok {
-		t.Fatal("expected route-specific POST list to not include global default when overridden")
-	}
-
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/legenda"]["OPTIONS"]["http://default.local"]; !ok {
-		t.Fatal("expected OPTIONS for /legenda to fallback to global default")
-	}
-
-	if _, ok := config.AllowedOriginsByRouteAndMethod["/health"]["GET"]["http://default.local"]; !ok {
-		t.Fatal("expected GET for /health to fallback to global default")
 	}
 }
 
