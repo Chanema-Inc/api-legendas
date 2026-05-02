@@ -127,6 +127,62 @@ Resposta de sucesso:
 }
 ```
 
+Erros possiveis:
+
+- `404 Not Found`: nenhuma legenda valida esta armazenada no momento, ou a legenda em cache expirou
+- `403 Forbidden`: origem nao permitida pelo CORS
+- `429 Too Many Requests`: rate limit excedido
+- `500 Internal Server Error`: erro interno
+
+## Regras De Validacao De Legenda
+
+- URLs devem terminar com `.srt`, `.vtt` ou `.webvtt`
+- Marcadores maliciosos como `<script`, `javascript:`, `<iframe`, `onerror=` e `onload=` sao rejeitados
+- O corpo da legenda baixada nao pode estar vazio
+- O servico valida o conteudo baixado, mas nao serve o corpo da legenda para clientes
+
+## Estrategia De Cache
+
+A implementacao atual suporta dois backends de cache:
+
+- `memory_cache`: cache em memoria padrao para desenvolvimento local e implantacoes de instancia unica
+- `redis`: backend de cache distribuido para implantacoes com multiplas instancias
+
+Estrategias suportadas hoje:
+
+- Expiracao por `CACHE_TTL`
+- Limpeza automatica de entradas expiradas durante operacoes de leitura e escrita no backend em memoria
+- Suporte explicito a invalidacao na implementacao de cache em memoria para futuros fluxos administrativos
+- Replicacao da ultima legenda no Redis por meio de uma chave dedicada com TTL
+
+A API depende de uma interface de armazenamento (`service.Store`), entao o backend pode ser substituido com impacto limitado no codigo dos handlers.
+
+## CORS
+
+O acesso entre origens e controlado por `ALLOWED_ORIGINS` e, opcionalmente, por allowlists especificas de metodo. A API:
+
+- Aceita requisicoes preflight de origens permitidas
+- Rejeita requisicoes de origens fora da allowlist do metodo efetivo (GET/POST)
+- Retorna `Access-Control-Allow-Origin` apenas para origens aceitas
+
+## Limitacao De Taxa
+
+A limitacao de taxa e aplicada por identificador de cliente derivado do endereco remoto da requisicao.
+
+Notas de implementacao:
+
+- Implementacao: `RateLimiter` em `internal/httpapi/rate_limiter.go`
+
+Notas de comportamento:
+
+- `/health` e excluida da limitacao de taxa de requisicoes.
+- Requisicoes para `/legenda` recebem limitacao de taxa por `RemoteAddr`.
+
+Configuracao:
+
+- `RATE_LIMIT_BURST`: numero maximo de requisicoes na janela configurada
+- `RATE_LIMIT_WINDOW`: duracao da janela de reset
+
 ## Docker
 
 Build da imagem:
