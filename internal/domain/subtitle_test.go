@@ -14,6 +14,7 @@ func TestValidateSubtitleURL(t *testing.T) {
 		errWant error
 	}{
 		{name: "valid vtt", input: "https://example.com/subtitle.vtt"},
+		{name: "valid webvtt", input: "https://example.com/subtitle.webvtt"},
 		{name: "valid srt", input: "https://example.com/subtitle.srt"},
 		{name: "invalid url", input: "://bad", errWant: ErrInvalidURL},
 		{name: "unsupported extension", input: "https://example.com/subtitle.txt", errWant: ErrUnsupportedFormat},
@@ -56,6 +57,33 @@ func TestValidateSubtitleContentAcceptsValidContent(t *testing.T) {
 	err := ValidateSubtitleContent([]byte("1\n00:00:00,000 --> 00:00:01,500\nHello\n"))
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestValidateSubtitleContentAcceptsVTT(t *testing.T) {
+	t.Parallel()
+
+	err := ValidateSubtitleContent([]byte("00:00:00.000 --> 00:00:01.500\nHello\n"))
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestValidateSubtitleContentAcceptsWEBVTT(t *testing.T) {
+	t.Parallel()
+
+	err := ValidateSubtitleContent([]byte("WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nHello\n"))
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestValidateSubtitleContentRejectsUnknownSubtitleFormat(t *testing.T) {
+	t.Parallel()
+
+	err := ValidateSubtitleContent([]byte("just a random text without cues"))
+	if !errors.Is(err, ErrInvalidContentFormat) {
+		t.Fatalf("expected ErrInvalidContentFormat, got %v", err)
 	}
 }
 
